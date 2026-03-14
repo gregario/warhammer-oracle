@@ -1,5 +1,7 @@
 # warhammer-oracle
 
+[![warhammer-oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
+
 Warhammer 40K rules, unit stats, and game flow — as an MCP server.
 
 Ask your AI assistant about datasheets, keywords, phase sequences, and more. Covers Warhammer 40,000, Combat Patrol, and Kill Team.
@@ -114,8 +116,9 @@ All data is embedded at build time — no network calls at runtime.
 
 | Category | Count | Source |
 |---|---|---|
-| Unit datasheets | 1,066 | [BSData](https://github.com/BSData/wh40k-10e) community project |
-| Shared rules | 33 | BSData |
+| 40K unit datasheets | 2,642 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e) |
+| Kill Team operatives | 506 | [BSData/wh40k-killteam](https://github.com/BSData/wh40k-killteam) |
+| Shared rules | 33 (40K) + 22 (KT) | BSData |
 | Curated keywords | 25 | Hand-written, plain English |
 | Game mode sequences | 3 | Hand-curated (40K, Combat Patrol, Kill Team) |
 
