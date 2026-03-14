@@ -4,6 +4,8 @@ Warhammer 40K rules, unit stats, and game flow — as an MCP server.
 
 Ask your AI assistant about datasheets, keywords, phase sequences, and more. Covers Warhammer 40,000, Combat Patrol, and Kill Team.
 
+[![Warhammer Oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
+
 ## Installation
 
 ```bash
