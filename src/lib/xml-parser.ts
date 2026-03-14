@@ -34,6 +34,7 @@ const ARRAY_TAGS = [
   "categoryLink",
   "rule",
   "entryLink",
+  "catalogueLink",
 ];
 
 const parser = new XMLParser({
@@ -192,6 +193,41 @@ function extractKeywords(entry: any): string[] {
     .map((cl: any) => cl["@_name"] as string)
     .filter((name: string) => !name.startsWith("Faction:"));
 }
+
+// === Exported helpers for fetch-data.ts cross-catalogue resolution ===
+
+export { parser as xmlParser, ensureArray };
+
+/**
+ * Parse a single raw XML entry node (from sharedSelectionEntries or selectionEntries)
+ * into a Unit object. Used by fetch-data.ts for cross-catalogue entryLink resolution.
+ */
+export function parseEntryNode(
+  entry: any,
+  faction: string,
+  allProfiles?: any[]
+): Unit | null {
+  const type = entry["@_type"];
+  const hidden = entry["@_hidden"] === "true";
+  if (hidden || (type !== "unit" && type !== "model")) return null;
+
+  const profiles = allProfiles ?? collectAllProfiles(entry);
+
+  return {
+    id: entry["@_id"],
+    name: entry["@_name"],
+    faction,
+    keywords: extractKeywords(entry),
+    profiles: extractUnitProfiles(profiles),
+    rangedWeapons: extractRangedWeapons(profiles),
+    meleeWeapons: extractMeleeWeapons(profiles),
+    abilities: extractAbilities(profiles),
+    points: extractPoints(entry),
+    gameSystem: "wh40k-10e" as const,
+  };
+}
+
+export { extractFaction, collectAllProfiles };
 
 // === Public API ===
 
