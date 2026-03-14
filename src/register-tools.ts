@@ -4,6 +4,7 @@ import { registerLookupKeyword } from "./tools/lookup-keyword.js";
 import { registerLookupPhase } from "./tools/lookup-phase.js";
 import { registerSearchUnits } from "./tools/search-units.js";
 import { registerCompareUnits } from "./tools/compare-units.js";
+import { registerGameFlow } from "./tools/game-flow.js";
 
 export function registerTools(server: McpServer): void {
   registerLookupUnit(server);
@@ -11,4 +12,5 @@ export function registerTools(server: McpServer): void {
   registerLookupPhase(server);
   registerSearchUnits(server);
   registerCompareUnits(server);
+  registerGameFlow(server);
 }
