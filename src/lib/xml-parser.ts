@@ -194,7 +194,12 @@ export function parseGameSystem(xml: string): GameSystemResult {
   const parsed = parser.parse(xml);
   const gs = parsed.gameSystem;
 
-  const rules = ensureArray(gs.rules?.rule).map((r: any) => ({
+  // Rules may be in <rules> and/or <sharedRules>
+  const directRules = ensureArray(gs.rules?.rule);
+  const sharedRules = ensureArray(gs.sharedRules?.rule);
+  const allRuleNodes = [...directRules, ...sharedRules];
+
+  const rules = allRuleNodes.map((r: any) => ({
     id: r["@_id"],
     name: r["@_name"],
     description: r.description ?? "",
@@ -212,7 +217,12 @@ export function parseCatalogue(xml: string): Unit[] {
   const cat = parsed.catalogue;
   const faction = extractFaction(cat["@_name"]);
 
-  const entries = ensureArray(cat.selectionEntries?.selectionEntry);
+  // Units may be in <selectionEntries> and/or <sharedSelectionEntries>
+  const directEntries = ensureArray(cat.selectionEntries?.selectionEntry);
+  const sharedEntries = ensureArray(
+    cat.sharedSelectionEntries?.selectionEntry
+  );
+  const entries = [...directEntries, ...sharedEntries];
 
   return entries
     .filter((entry: any) => {
