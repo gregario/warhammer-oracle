@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.gregario/warhammer-oracle",
+  "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server",
+  "repository": {
+    "url": "https://github.com/gregario/warhammer-oracle",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "warhammer-oracle",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

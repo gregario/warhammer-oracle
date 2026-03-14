@@ -29,8 +29,8 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   textNodeName: "#text",
-  isArray: (_name: string, jpath: string) => {
-    const tag = jpath.split(".").pop() ?? "";
+  isArray: (_name: string, jpath: unknown) => {
+    const tag = String(jpath).split(".").pop() ?? "";
     return ARRAY_TAGS.includes(tag);
   },
 });
