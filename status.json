@@ -1,0 +1,10 @@
+{
+  "version": "0.1.4",
+  "tools_count": 6,
+  "npm": { "published": true },
+  "glama": { "listed": true, "score_badge": true, "ownership_claimed": true },
+  "mcp_registry": { "registered": true, "mcp_name": "io.github.gregario/warhammer-oracle" },
+  "awesome_mcp_servers": { "pr_submitted": true, "pr_url": "https://github.com/punkpeye/awesome-mcp-servers/pull/3224" },
+  "github": { "release_tag": "v0.1.3", "sponsor_enabled": false },
+  "ci": { "oidc_publishing": true, "workflow": "sync-data.yml" }
+}
