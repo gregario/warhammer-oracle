@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   sync:
@@ -19,9 +20,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
           cache: npm
 
       - run: npm ci
+
+      - name: Ensure npm supports OIDC
+        run: npm install -g npm@latest
 
       - name: Fetch latest BSData
         run: npm run fetch-data
@@ -59,14 +64,11 @@ jobs:
           git push
 
       - name: Bump version and publish to npm
-        if: steps.diff.outputs.changed == 'true' && env.NPM_TOKEN != ''
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.diff.outputs.changed == 'true'
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
           npm version patch --no-git-tag-version
           npm run build
-          npm publish --access public
+          npm publish --access public --provenance
           # Commit the version bump
           git add package.json package-lock.json
           git commit -m "chore: bump version for data sync publish"
