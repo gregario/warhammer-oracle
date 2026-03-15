@@ -1,10 +1,22 @@
-# warhammer-oracle
+<!-- mcp-name: io.github.gregario/warhammer-oracle -->
+<p align="center">
+  <h1 align="center">Warhammer Oracle</h1>
+  <p align="center">Warhammer 40K rules, unit stats, and game flow. An MCP server.</p>
+</p>
 
-[![warhammer-oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
+<p align="center">
+  <a href="https://www.npmjs.com/package/warhammer-oracle"><img src="https://img.shields.io/npm/v/warhammer-oracle.svg" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/warhammer-oracle"><img src="https://img.shields.io/npm/dm/warhammer-oracle.svg" alt="npm downloads"></a>
+  <a href="https://github.com/gregario/warhammer-oracle/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT Licence"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js 18+"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-compatible-purple.svg" alt="MCP Compatible"></a>
+</p>
 
-Warhammer 40K rules, unit stats, and game flow — as an MCP server.
+---
 
 Ask your AI assistant about datasheets, keywords, phase sequences, and more. Covers Warhammer 40,000, Combat Patrol, and Kill Team.
+
+[![warhammer-oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
 
 ## Installation
 
