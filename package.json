@@ -1,6 +1,6 @@
 {
   "name": "warhammer-oracle",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server",
   "mcpName": "io.github.gregario/warhammer-oracle",
   "repository": {
