@@ -31,6 +31,10 @@ Or install globally:
 npm install -g warhammer-oracle
 ```
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/gregario-warhammer-oracle).
+
 ## Configuration
 
 ### Claude Desktop
