@@ -25,9 +25,6 @@ jobs:
 
       - run: npm ci
 
-      - name: Ensure npm supports OIDC
-        run: npm install -g npm@latest
-
       - name: Fetch latest BSData
         run: npm run fetch-data
         env:
