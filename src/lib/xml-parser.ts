@@ -56,12 +56,89 @@ function ensureArray<T>(val: T | T[] | undefined | null): T[] {
   return Array.isArray(val) ? val : [val];
 }
 
+// === JSON → XML-shape normalization (for BSData/wh40k-11e, which ships JSON) ===
+
+// Keys that appear as XML attributes in the 10e schema (accessed elsewhere in this
+// file via `["@_..."]`) but are plain properties in BSData's 11e JSON export.
+const ATTR_ALIAS_KEYS = new Set([
+  "id",
+  "name",
+  "hidden",
+  "type",
+  "typeId",
+  "targetId",
+  "value",
+  "library",
+]);
+
+// BSData's 11e JSON represents repeatable elements as flat arrays (e.g.
+// `"profiles": [ {...}, {...} ]`), whereas the 10e XML schema (and every
+// extractor in this file) expects the XML wrapper shape
+// `{ profiles: { profile: [...] } }`. This maps each flat container key to
+// the singular child key the extractors read via `ensureArray(node.X?.y)`.
+const PLURAL_CONTAINER_KEYS: Record<string, string> = {
+  sharedSelectionEntries: "selectionEntry",
+  sharedSelectionEntryGroups: "selectionEntryGroup",
+  selectionEntries: "selectionEntry",
+  selectionEntryGroups: "selectionEntryGroup",
+  entryLinks: "entryLink",
+  profiles: "profile",
+  characteristics: "characteristic",
+  categoryLinks: "categoryLink",
+  costs: "cost",
+  rules: "rule",
+  sharedRules: "rule",
+  infoLinks: "infoLink",
+  catalogueLinks: "catalogueLink",
+};
+
+/**
+ * Recursively reshape a parsed BSData 11e JSON node into the same shape
+ * fast-xml-parser produces for 10e XML, so every extractor in this file
+ * (parseEntryNode, parseDetachments, parseEnhancements, collectAllProfiles,
+ * etc.) can run against it unchanged: known attribute-like keys get an
+ * `"@_"`-prefixed string alias, `"$text"` becomes `"#text"`, and known
+ * flat-array containers get re-wrapped into the XML's nested plural/singular
+ * shape.
+ */
+export function normalizeJsonNode(node: any): any {
+  if (Array.isArray(node)) {
+    return node.map((item) => normalizeJsonNode(item));
+  }
+  if (node !== null && typeof node === "object") {
+    const out: any = {};
+    for (const [key, val] of Object.entries(node)) {
+      if (key === "$text") {
+        out["#text"] = val;
+        continue;
+      }
+
+      const singular = PLURAL_CONTAINER_KEYS[key];
+      if (singular && (Array.isArray(val) || (val !== null && typeof val === "object"))) {
+        const items = ensureArray(val as any).map((item) => normalizeJsonNode(item));
+        out[key] = { [singular]: items };
+        continue;
+      }
+
+      out[key] = normalizeJsonNode(val);
+      if (ATTR_ALIAS_KEYS.has(key) && (val === null || typeof val !== "object")) {
+        out["@_" + key] = typeof val === "boolean" ? String(val) : val;
+      }
+    }
+    return out;
+  }
+  return node;
+}
+
 function getCharacteristic(
   characteristics: any[],
   name: string
 ): string {
+  // Case-insensitive: BSData/wh40k-11e renamed some characteristics'
+  // capitalization (e.g. 10e's "SV" is "Sv" in 11e's schema) even though the
+  // typeIds are unchanged.
   const char = characteristics.find(
-    (c: any) => c["@_name"] === name
+    (c: any) => typeof c["@_name"] === "string" && c["@_name"].toLowerCase() === name.toLowerCase()
   );
   if (!char) return "";
   const text = char["#text"];

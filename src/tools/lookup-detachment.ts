@@ -1,18 +1,23 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DETACHMENTS } from "../data/detachments.js";
+import { DETACHMENTS_11E } from "../data/detachments-11e.js";
 import { ENHANCEMENTS } from "../data/enhancements.js";
+import { ENHANCEMENTS_11E } from "../data/enhancements-11e.js";
 import { STRATAGEMS } from "../data/stratagems.js";
 import { fuzzySearch } from "../lib/search.js";
-import type { Detachment, Enhancement, Stratagem } from "../types.js";
+import { formatModeStamp } from "../lib/format.js";
+import type { Detachment, Enhancement, GameSystem, Stratagem } from "../types.js";
 
 function formatDetachment(
   det: Detachment,
   enhancements: Enhancement[],
   stratagems: Stratagem[],
+  gameSystem: GameSystem,
 ): string {
   const sections: string[] = [];
 
+  sections.push(formatModeStamp(gameSystem));
   sections.push(`# ${det.name}\n\n**Game:** Warhammer 40,000 | **Faction:** ${det.faction}`);
 
   sections.push(`### Detachment Ability: ${det.ability.name}\n\n${det.ability.description}`);
@@ -29,6 +34,10 @@ function formatDetachment(
       (s) => `- **${s.name}** (${s.cpCost} CP, ${s.phase}) — ${s.effect}`,
     );
     sections.push(`### Stratagems\n\n${stratLines.join("\n")}`);
+  } else if (gameSystem === "wh40k-11e") {
+    sections.push(
+      "> No detachment-specific stratagem data for this detachment yet — only a few 11th Edition factions/detachments are covered so far (use lookup_stratagem for Core Stratagems, which apply to every army).",
+    );
   }
 
   return sections.join("\n\n");
@@ -45,9 +54,20 @@ export function registerLookupDetachment(server: McpServer): void {
         .string()
         .optional()
         .describe("Optional faction filter (e.g. 'Space Marines', 'Necrons')"),
+      game_mode: z
+        .enum(["40k", "40k_10e", "40k_11e"])
+        .optional()
+        .describe(
+          "Edition: defaults to '40k_11e'. Pass '40k_10e' for 10th Edition detachments, " +
+            "'40k'/'40k_11e' for 11th Edition (current default).",
+        ),
     },
-    async ({ name, faction }) => {
-      let candidates: Detachment[] = [...DETACHMENTS];
+    async ({ name, faction, game_mode }) => {
+      const gameSystem: GameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
+      const detachmentsPool = gameSystem === "wh40k-10e" ? DETACHMENTS : DETACHMENTS_11E;
+      const enhancementsPool = gameSystem === "wh40k-10e" ? ENHANCEMENTS : ENHANCEMENTS_11E;
+
+      let candidates: Detachment[] = [...detachmentsPool];
 
       if (faction) {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
@@ -68,23 +88,21 @@ export function registerLookupDetachment(server: McpServer): void {
 
       const det = matches[0];
 
-      const relatedEnhancements = ENHANCEMENTS.filter(
+      const relatedEnhancements = enhancementsPool.filter(
         (e) =>
           e.faction === det.faction &&
           e.detachment.toLowerCase() === det.name.toLowerCase(),
       );
 
       const relatedStratagems = STRATAGEMS.filter(
-        (s) =>
-          s.detachment !== null &&
-          s.detachment.toLowerCase() === det.name.toLowerCase(),
+        (s) => s.detachment !== null && s.detachment.toLowerCase() === det.name.toLowerCase(),
       );
 
       return {
         content: [
           {
             type: "text" as const,
-            text: formatDetachment(det, relatedEnhancements, relatedStratagems),
+            text: formatDetachment(det, relatedEnhancements, relatedStratagems, gameSystem),
           },
         ],
       };

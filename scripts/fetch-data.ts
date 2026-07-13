@@ -1,18 +1,18 @@
 /**
- * Fetch BSData/wh40k-10e and BSData/wh40k-killteam data and generate
- * embedded TypeScript data files.
+ * Fetch BSData/wh40k-10e, BSData/wh40k-11e, and BSData/wh40k-killteam data
+ * and generate embedded TypeScript data files.
  *
  * Usage: npx tsx scripts/fetch-data.ts
  *
- * Requires `gh` CLI authenticated with GitHub.
+ * Uses the public GitHub REST API directly (no `gh` CLI required). Set
+ * GITHUB_TOKEN to raise the rate limit above the 60 req/hr anonymous cap
+ * (GitHub Actions provides this automatically).
  */
 
-import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  parseGameSystem,
   parseKillTeamGameSystem,
   parseKillTeamCatalogue,
   parseDetachments,
@@ -23,6 +23,7 @@ import {
   parseEntryNode,
   extractFaction,
   collectAllProfiles,
+  normalizeJsonNode,
 } from "../src/lib/xml-parser.js";
 import type { Unit, Detachment, Enhancement, KillTeamOperative } from "../src/types.js";
 
@@ -31,81 +32,134 @@ const __dirname = dirname(__filename);
 const ROOT = join(__dirname, "..");
 
 const REPO_40K = "BSData/wh40k-10e";
+const REPO_40K_11E = "BSData/wh40k-11e";
 const REPO_KT = "BSData/wh40k-killteam";
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── GitHub API helpers ───────────────────────────────────────────────────
 
 interface TreeEntry {
   path: string;
   sha: string;
 }
 
-function fetchTree(repo: string, branch = "main"): TreeEntry[] {
-  const raw = execSync(
-    `gh api repos/${repo}/git/trees/${branch} --jq '.tree[] | select(.path | test("\\\\.(cat|gst)$")) | "\\(.path)\\t\\(.sha)"'`,
-    { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 }
-  );
-  return raw
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [path, sha] = line.split("\t");
-      return { path, sha };
-    });
+async function ghApi(path: string): Promise<any> {
+  const headers: Record<string, string> = { Accept: "application/vnd.github+json" };
+  if (process.env.GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  const res = await fetch(`https://api.github.com/${path}`, { headers });
+  if (!res.ok) {
+    throw new Error(`GitHub API ${path} failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
 }
 
-function fetchBlob(repo: string, sha: string): string {
-  const b64 = execSync(
-    `gh api repos/${repo}/git/blobs/${sha} --jq '.content'`,
-    { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 }
-  );
-  return Buffer.from(b64.trim(), "base64").toString("utf-8");
+async function fetchTree(repo: string, branch = "main"): Promise<TreeEntry[]> {
+  const data = await ghApi(`repos/${repo}/git/trees/${branch}?recursive=1`);
+  const tree = (data.tree ?? []) as Array<{ path: string; sha: string; type: string }>;
+  return tree
+    .filter((e) => e.type === "blob" && /\.(cat|gst|json)$/.test(e.path))
+    .map((e) => ({ path: e.path, sha: e.sha }));
+}
+
+async function fetchBlob(repo: string, sha: string): Promise<string> {
+  const data = await ghApi(`repos/${repo}/git/blobs/${sha}`);
+  // A short delay avoids tripping GitHub's secondary (burst) rate limit,
+  // which is separate from — and much stricter than — the hourly quota.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return Buffer.from(data.content as string, "base64").toString("utf-8");
+}
+
+// BSData catalogues often ship as a thin "roster" file plus a same-named
+// "Library" file holding the faction's actual detachments/units (e.g.
+// "Chaos - Chaos Daemons.json" catalogueLinks into "Chaos - Chaos Daemons
+// Library.json", which is where Daemons' own Detachment group actually
+// lives). That's the only case where following a catalogueLink to source
+// detachments/enhancements is correct. The same library files are ALSO
+// catalogueLinked by many unrelated factions purely to grant access to
+// allied units (e.g. every Space Marine chapter links "Imperial Knights -
+// Library" so a Marines army can include Knight allies) — walking those
+// links for detachments/enhancements too would wrongly attribute another
+// faction's entire detachment list to the importing faction. This checks
+// whether a linked library "belongs" to the importing catalogue's own
+// faction (by name), which is the only signal available — BattleScribe's
+// `importRootEntries` flag doesn't distinguish the two cases (it's `true`
+// on both a faction's own library link and its ally-unit library links).
+//
+// Match is substring-based, not exact: BSData's own filename and internal
+// `name` attribute disagree for at least one library ("Chaos - Chaos
+// Daemons Library.json"'s filename vs. its internal name "Chaos - Daemons
+// Library", missing the repeated "Chaos") — exact string equality rejected
+// that as a false mismatch and silently dropped Chaos Daemons' own 9
+// detachments. Substring matching tolerates that inconsistency while still
+// correctly rejecting unrelated pairs (e.g. "chaos space marines" contains
+// neither "chaos knights" nor "daemons", and vice versa).
+function libraryBelongsToFaction(catalogueName: string, libraryName: string): boolean {
+  const stripToFaction = (name: string) =>
+    extractFaction(name)
+      .replace(/\s*-?\s*Library$/i, "")
+      .trim()
+      .toLowerCase();
+  const a = stripToFaction(catalogueName);
+  const b = stripToFaction(libraryName);
+  return a === b || a.includes(b) || b.includes(a);
 }
 
 // ── Fetch 40K data (with cross-catalogue entryLink resolution) ──────────
+// Shared between BSData/wh40k-10e (XML) and BSData/wh40k-11e (JSON) — both
+// repos use the same underlying BattleScribe catalogue schema, just a
+// different file encoding, so `parseNode` is the only thing that varies.
 
 interface ParsedCatalogue {
   id: string;
   name: string;
   isLibrary: boolean;
-  raw: any; // raw parsed XML catalogue node
+  raw: any; // parsed catalogue node, normalized to the XML-parser shape
 }
 
-async function fetch40k(): Promise<{
+async function fetchCatalogueRepo(
+  repo: string,
+  gameSystemFiles: TreeEntry[],
+  catFiles: TreeEntry[],
+  parseNode: (raw: string) => any,
+  gameSystem: "wh40k-10e" | "wh40k-11e",
+): Promise<{
   units: Unit[];
   detachments: Detachment[];
   enhancements: Enhancement[];
   rules: { name: string; description: string }[];
 }> {
-  console.log("Fetching file tree from BSData/wh40k-10e...");
-  const tree = fetchTree(REPO_40K);
-
-  const gstFiles = tree.filter((e) => e.path.endsWith(".gst"));
-  const catFiles = tree.filter((e) => e.path.endsWith(".cat"));
-
-  console.log(`Found ${gstFiles.length} .gst file(s), ${catFiles.length} .cat file(s)`);
-
-  // ── Phase 0: Parse .gst files for rules ──
+  // ── Phase 0: Parse game system file(s) for rules ──
   const allRules: { name: string; description: string }[] = [];
-  // Also build a global shared entry index from the .gst (game system) file
+  // Also build a global shared entry index from the game system file
   const globalSharedIndex = new Map<string, any>();
 
-  for (const gst of gstFiles) {
+  for (const gst of gameSystemFiles) {
     console.log(`  Fetching ${gst.path}...`);
-    const xml = fetchBlob(REPO_40K, gst.sha);
-    const result = parseGameSystem(xml);
-    console.log(`    → ${result.rules.length} rules from ${result.name}`);
-    for (const r of result.rules) {
-      allRules.push({ name: r.name, description: r.description });
+    const raw = await fetchBlob(repo, gst.sha);
+    const parsed = parseNode(raw);
+    const gs = parsed.gameSystem;
+    if (!gs) continue;
+
+    const directRules = ensureArray(gs.rules?.rule);
+    const sharedRules = ensureArray(gs.sharedRules?.rule);
+    let skipped = 0;
+    for (const r of [...directRules, ...sharedRules]) {
+      // Skip stub rules with no description text yet (seen in the actively-developing
+      // wh40k-11e repo) — an empty definition would look broken to a user querying it.
+      if (!r.description) {
+        skipped++;
+        continue;
+      }
+      allRules.push({ name: r["@_name"], description: r.description });
     }
+    console.log(
+      `    → ${directRules.length + sharedRules.length - skipped} rules from ${gs["@_name"]}` +
+        (skipped > 0 ? ` (${skipped} skipped: no description yet)` : ""),
+    );
 
     // Index shared entries from game system file too
-    const parsed = xmlParser.parse(xml);
-    const gs = parsed.gameSystem;
-    if (gs) {
-      indexSharedEntries(gs, globalSharedIndex);
-    }
+    indexSharedEntries(gs, globalSharedIndex);
   }
 
   // ── Phase 1: Fetch and parse ALL catalogues (including libraries) ──
@@ -113,8 +167,8 @@ async function fetch40k(): Promise<{
 
   for (const cat of catFiles) {
     console.log(`  Fetching ${cat.path}...`);
-    const xml = fetchBlob(REPO_40K, cat.sha);
-    const parsed = xmlParser.parse(xml);
+    const raw = await fetchBlob(repo, cat.sha);
+    const parsed = parseNode(raw);
     const catNode = parsed.catalogue;
 
     const isLibrary = catNode["@_library"] === "true" || cat.path.includes("Library");
@@ -176,13 +230,16 @@ async function fetch40k(): Promise<{
     const catEnhancements = parseEnhancements(cat.raw, faction, globalSharedIndex);
     allEnhancements.push(...catEnhancements);
 
-    // Also check linked library catalogues for detachments/enhancements
+    // Also check linked library catalogues for detachments/enhancements —
+    // but only the catalogue's OWN dedicated library (see libraryBelongsToFaction),
+    // not every ally-unit library it links to for roster-building purposes.
     const catLinks = ensureArray(cat.raw.catalogueLinks?.catalogueLink);
     for (const catLink of catLinks) {
       const targetCatId = catLink["@_targetId"];
       if (!targetCatId) continue;
       const linkedCat = catalogueById.get(targetCatId);
       if (!linkedCat) continue;
+      if (!libraryBelongsToFaction(cat.name, linkedCat.name)) continue;
 
       const linkedDetachments = parseDetachments(linkedCat.raw, faction, globalSharedIndex, globalRuleIndex);
       allDetachments.push(...linkedDetachments);
@@ -270,14 +327,16 @@ async function fetch40k(): Promise<{
     allUnits.push(...dedupedUnits);
   }
 
-  // Global dedup by ID (in case multiple factions share exact same ID — unlikely but safe)
+  // Global dedup by ID (in case multiple factions share exact same ID — unlikely but safe).
+  // Also stamp the gameSystem here: parseEntryNode/parseDetachments/parseEnhancements
+  // hardcode "wh40k-10e", so the 11e caller's value is applied on the way out.
   const finalUnits: Unit[] = [];
   const globalSeen = new Set<string>();
   for (const unit of allUnits) {
     const key = `${unit.faction}::${unit.id}`;
     if (!globalSeen.has(key)) {
       globalSeen.add(key);
-      finalUnits.push(unit);
+      finalUnits.push({ ...unit, gameSystem });
     }
   }
 
@@ -288,7 +347,7 @@ async function fetch40k(): Promise<{
     const key = `${det.faction}::${det.id}`;
     if (!detachmentSeen.has(key)) {
       detachmentSeen.add(key);
-      finalDetachments.push(det);
+      finalDetachments.push({ ...det, gameSystem });
     }
   }
 
@@ -298,11 +357,11 @@ async function fetch40k(): Promise<{
     const key = `${enh.faction}::${enh.id}`;
     if (!enhancementSeen.has(key)) {
       enhancementSeen.add(key);
-      finalEnhancements.push(enh);
+      finalEnhancements.push({ ...enh, gameSystem });
     }
   }
 
-  console.log(`\n40K Total: ${finalUnits.length} units, ${finalDetachments.length} detachments, ${finalEnhancements.length} enhancements, ${allRules.length} shared rules`);
+  console.log(`\n${gameSystem} Total: ${finalUnits.length} units, ${finalDetachments.length} detachments, ${finalEnhancements.length} enhancements, ${allRules.length} shared rules`);
 
   // Log per-faction breakdown
   const factionCounts = new Map<string, number>();
@@ -333,6 +392,41 @@ async function fetch40k(): Promise<{
   }
 
   return { units: finalUnits, detachments: finalDetachments, enhancements: finalEnhancements, rules: allRules };
+}
+
+export async function fetch40k() {
+  console.log("Fetching file tree from BSData/wh40k-10e...");
+  const tree = await fetchTree(REPO_40K);
+
+  const gstFiles = tree.filter((e) => e.path.endsWith(".gst"));
+  const catFiles = tree.filter((e) => e.path.endsWith(".cat"));
+  console.log(`Found ${gstFiles.length} .gst file(s), ${catFiles.length} .cat file(s)`);
+
+  return fetchCatalogueRepo(
+    REPO_40K,
+    gstFiles,
+    catFiles,
+    (xml) => xmlParser.parse(xml),
+    "wh40k-10e",
+  );
+}
+
+export async function fetch11e() {
+  console.log("\nFetching file tree from BSData/wh40k-11e...");
+  const tree = await fetchTree(REPO_40K_11E);
+  const jsonFiles = tree.filter((e) => e.path.endsWith(".json"));
+
+  const gameSystemFiles = jsonFiles.filter((e) => e.path === "Warhammer 40,000.json");
+  const catFiles = jsonFiles.filter((e) => e.path !== "Warhammer 40,000.json");
+  console.log(`Found ${catFiles.length} catalogue file(s), ${gameSystemFiles.length} game system file(s)`);
+
+  return fetchCatalogueRepo(
+    REPO_40K_11E,
+    gameSystemFiles,
+    catFiles,
+    (raw) => normalizeJsonNode(JSON.parse(raw)),
+    "wh40k-11e",
+  );
 }
 
 /** Index all shared selection entries from a catalogue/gameSystem node into the global map */
@@ -448,7 +542,7 @@ async function fetchKillTeam(): Promise<{
   rules: { name: string; description: string }[];
 }> {
   console.log("\nFetching file tree from BSData/wh40k-killteam...");
-  const tree = fetchTree(REPO_KT, "master");
+  const tree = await fetchTree(REPO_KT, "master");
 
   // Only 2024 edition files
   const gstFiles = tree.filter(
@@ -466,7 +560,7 @@ async function fetchKillTeam(): Promise<{
 
   for (const gst of gstFiles) {
     console.log(`  Fetching ${gst.path}...`);
-    const xml = fetchBlob(REPO_KT, gst.sha);
+    const xml = await fetchBlob(REPO_KT, gst.sha);
     const result = parseKillTeamGameSystem(xml);
     console.log(`    → ${result.rules.length} rules from ${result.name}`);
     for (const r of result.rules) {
@@ -483,7 +577,7 @@ async function fetchKillTeam(): Promise<{
     }
 
     console.log(`  Fetching ${cat.path}...`);
-    const xml = fetchBlob(REPO_KT, cat.sha);
+    const xml = await fetchBlob(REPO_KT, cat.sha);
     const operatives = parseKillTeamCatalogue(xml);
     console.log(`    → ${operatives.length} operatives`);
     allOperatives.push(...operatives);
@@ -499,6 +593,12 @@ async function fetchKillTeam(): Promise<{
 
 async function main() {
   const { units, detachments, enhancements, rules: rules40k } = await fetch40k();
+  const {
+    units: units11e,
+    detachments: detachments11e,
+    enhancements: enhancements11e,
+    rules: rules11e,
+  } = await fetch11e();
   const { operatives, rules: rulesKT } = await fetchKillTeam();
 
   // ── Write src/data/units.ts ──
@@ -565,6 +665,70 @@ async function main() {
   writeFileSync(rulesPath, rulesContent, "utf-8");
   console.log(`Wrote ${rulesPath} (${rules40k.length} rules)`);
 
+  // ── Write src/data/units-11e.ts ──
+  const units11ePath = join(ROOT, "src", "data", "units-11e.ts");
+  const units11eContent = [
+    "// Auto-generated by scripts/fetch-data.ts — do not edit manually",
+    `// Generated: ${new Date().toISOString()}`,
+    `// Source: https://github.com/${REPO_40K_11E}`,
+    "",
+    'import type { Unit } from "../types.js";',
+    "",
+    `export const UNITS_11E: Unit[] = ${JSON.stringify(units11e, null, 2)};`,
+    "",
+  ].join("\n");
+
+  writeFileSync(units11ePath, units11eContent, "utf-8");
+  console.log(`Wrote ${units11ePath} (${units11e.length} units)`);
+
+  // ── Write src/data/detachments-11e.ts ──
+  const detachments11ePath = join(ROOT, "src", "data", "detachments-11e.ts");
+  const detachments11eContent = [
+    "// Auto-generated by scripts/fetch-data.ts — do not edit manually",
+    `// Generated: ${new Date().toISOString()}`,
+    `// Source: https://github.com/${REPO_40K_11E}`,
+    "",
+    'import type { Detachment } from "../types.js";',
+    "",
+    `export const DETACHMENTS_11E: Detachment[] = ${JSON.stringify(detachments11e, null, 2)};`,
+    "",
+  ].join("\n");
+
+  writeFileSync(detachments11ePath, detachments11eContent, "utf-8");
+  console.log(`Wrote ${detachments11ePath} (${detachments11e.length} detachments)`);
+
+  // ── Write src/data/enhancements-11e.ts ──
+  const enhancements11ePath = join(ROOT, "src", "data", "enhancements-11e.ts");
+  const enhancements11eContent = [
+    "// Auto-generated by scripts/fetch-data.ts — do not edit manually",
+    `// Generated: ${new Date().toISOString()}`,
+    `// Source: https://github.com/${REPO_40K_11E}`,
+    "",
+    'import type { Enhancement } from "../types.js";',
+    "",
+    `export const ENHANCEMENTS_11E: Enhancement[] = ${JSON.stringify(enhancements11e, null, 2)};`,
+    "",
+  ].join("\n");
+
+  writeFileSync(enhancements11ePath, enhancements11eContent, "utf-8");
+  console.log(`Wrote ${enhancements11ePath} (${enhancements11e.length} enhancements)`);
+
+  // ── Write src/data/rules-11e.ts ──
+  const rules11ePath = join(ROOT, "src", "data", "rules-11e.ts");
+  const rules11eContent = [
+    "// Auto-generated by scripts/fetch-data.ts — do not edit manually",
+    `// Generated: ${new Date().toISOString()}`,
+    `// Source: https://github.com/${REPO_40K_11E}`,
+    "",
+    "export const SHARED_RULES_11E: { name: string; description: string }[] = " +
+      JSON.stringify(rules11e, null, 2) +
+      ";",
+    "",
+  ].join("\n");
+
+  writeFileSync(rules11ePath, rules11eContent, "utf-8");
+  console.log(`Wrote ${rules11ePath} (${rules11e.length} rules)`);
+
   // ── Write src/data/kill-team-operatives.ts ──
   const ktPath = join(ROOT, "src", "data", "kill-team-operatives.ts");
   const ktContent = [
@@ -598,7 +762,12 @@ async function main() {
   console.log(`Wrote ${ktRulesPath} (${rulesKT.length} rules)`);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+// Only auto-run when this file is the process entrypoint (`npx tsx scripts/fetch-data.ts`),
+// so it can also be imported for testing individual fetch functions (e.g. fetch11e()).
+const isMainModule = process.argv[1] ? pathToFileURL(process.argv[1]).href === import.meta.url : false;
+if (isMainModule) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}

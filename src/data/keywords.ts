@@ -5,24 +5,25 @@ export const KEYWORDS: KeywordDefinition[] = [
   {
     name: "Devastating Wounds",
     description:
-      "Critical wounds (unmodified wound roll of 6) inflict mortal wounds equal to the weapon's Damage characteristic instead of normal damage. These mortal wounds bypass the target's armour save entirely.",
+      "Each time an attack made with a Devastating Wounds weapon results in a critical wound, the attack sequence for that attack ends and the target unit suffers a number of mortal wounds equal to the weapon's Damage characteristic, inflicted after resolving any normal damage from those attacks. These mortal wounds can damage a maximum of one model per critical wound; any excess is lost.",
     plainEnglish:
-      "When you roll a 6 to wound (before any modifiers), the hit skips the enemy's armour save completely and deals mortal wounds equal to the weapon's damage value. This is huge against tough targets with great saves — they just take the damage, no save allowed. The confusing part: it replaces the normal damage for that hit, it doesn't add extra on top.",
+      "When you roll a 6 to wound (before any modifiers), that hit skips the enemy's armour save completely and deals mortal wounds equal to the weapon's damage value. This is huge against tough targets with great saves — they just take the damage, no save allowed. One catch to remember: each critical wound can only kill up to one model's worth of mortal wounds — if the Damage characteristic would overkill a model, the leftover mortal wounds are wasted rather than splashing onto the next model.",
     gameModes: ["40k", "combat_patrol"],
     examples: [
       "A weapon with Damage 2 and Devastating Wounds rolls a 6 to wound — the target takes 2 mortal wounds with no save.",
-      "An assault cannon with Dev Wounds can punch through Terminators' 2+ save on lucky rolls.",
+      "A weapon with Damage 6 and Devastating Wounds scores a critical wound against a model with 3 wounds remaining — 3 of those mortal wounds kill the model, and the other 3 are lost rather than carrying over to the next model.",
     ],
   },
   {
     name: "Lethal Hits",
     description:
-      "Critical hits (unmodified hit roll of 6) automatically wound the target — no wound roll required.",
+      "Each time an attack made with a Lethal Hits weapon results in a critical hit, you can choose for that attack to automatically wound the target instead of making a wound roll.",
     plainEnglish:
-      "When you roll a natural 6 to hit, you skip the wound roll entirely — it just wounds automatically. This is great against really tough targets where you'd normally need a 5+ or 6 to wound, because you bypass that bad wound roll completely.",
+      "When you roll a natural 6 to hit, you can choose to skip the wound roll entirely — it just wounds automatically. This is great against really tough targets where you'd normally need a 5+ or 6 to wound. The trade-off: it's optional, and choosing it means no wound roll is made for that attack, so it can never count as a critical wound — which means it can't also trigger Devastating Wounds. Against a target you'd want to critically wound anyway, it's sometimes better to just roll normally.",
     gameModes: ["40k", "combat_patrol"],
     examples: [
-      "Shooting Strength 4 weapons into Toughness 10? Normally you need 6s to wound. With Lethal Hits, every 6 to hit just wounds automatically.",
+      "Shooting Strength 4 weapons into Toughness 10? Normally you need 6s to wound. With Lethal Hits, every 6 to hit can just wound automatically instead of rolling.",
+      "A weapon with both Lethal Hits and Devastating Wounds is usually better off rolling to wound anyway on a critical hit — an automatic wound from Lethal Hits skips the chance of also rolling a critical wound.",
     ],
   },
   {
@@ -50,20 +51,21 @@ export const KEYWORDS: KeywordDefinition[] = [
   {
     name: "Blast",
     description:
-      "When targeting a unit with 6+ models, add 1 to the Attacks characteristic for each 5 models in the target unit (minimum +1). Cannot be used for Overwatch.",
+      "Each time you gather attack dice for a Blast weapon, add one additional attack dice for every five models that were in the target unit in the Select Targets step (rounding down).",
     plainEnglish:
-      "Blast weapons get bonus shots when shooting at big groups — the bigger the mob, the more shots you get. For every 5 models in the target unit, add 1 attack. A unit of 10 models gives you +2 attacks. The catch: you can never use Blast weapons during Overwatch (the reactive shooting when someone charges you).",
+      "Blast weapons get bonus shots when shooting at big groups — the bigger the mob, the more shots you get. For every 5 models in the target unit (rounding down), add 1 attack. A unit of 10 models gives you +2 attacks, but a unit of only 4 models gives you no bonus at all — there's no minimum +1 anymore.",
     gameModes: ["40k", "combat_patrol"],
     examples: [
       "A frag missile (Blast, D6 attacks) shoots at a 20-model unit: roll D6 and add 4 attacks.",
+      "A Blast weapon shooting at a unit with only 4 models remaining gets no bonus attack dice (4 models / 5, rounded down, is 0).",
     ],
   },
   {
     name: "Heavy",
     description:
-      "If the bearer's unit Remained Stationary this phase, add 1 to hit rolls made with this weapon.",
+      "In your Shooting phase, each time an attack is made with a Heavy weapon, add 1 to the hit roll if the attacking unit is unengaged, was not set up on the battlefield this turn, and has had no model move more than 3\" this turn.",
     plainEnglish:
-      "Stand still and you shoot better — you get +1 to your hit rolls. If you moved at all this turn, you shoot at normal accuracy. This rewards a 'hold your ground and shoot' playstyle. The +1 can make a big difference: a 4+ to hit becomes a 3+.",
+      "You get +1 to hit with Heavy weapons as long as your unit hasn't moved more than 3\" this turn, isn't Engaged, and wasn't just set up (e.g. from Reserves) this turn. Unlike older editions, you don't have to be perfectly stationary — a small 3\" shuffle still qualifies. The +1 can make a big difference: a 4+ to hit becomes a 3+.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
@@ -80,17 +82,17 @@ export const KEYWORDS: KeywordDefinition[] = [
   {
     name: "Assault",
     description:
-      "This weapon can be fired even if the bearer's unit Advanced this turn, but hit rolls suffer a -1 penalty if the unit Advanced.",
+      "A unit containing one or more models with an Assault weapon can shoot using assault shooting: eligible if unengaged and it made an advance move this turn, and only Assault weapons can be selected.",
     plainEnglish:
-      "You can shoot this weapon even after Advancing (the extra-fast move). Normally, if you Advance you can't shoot at all. Assault weapons let you — but you take a -1 to hit as a trade-off. Great for aggressive play where you want to close distance fast while still shooting.",
+      "You can shoot this weapon even after Advancing (the extra-fast move). Normally, if you Advance you can't shoot at all — Assault weapons let you, and only Assault weapons can be fired that way. Unlike older editions, there's no accuracy penalty for shooting after Advancing — it's a clean, no-downside exception. Great for aggressive play where you want to close distance fast while still shooting.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
     name: "Pistol",
     description:
-      "This weapon can be fired even if the bearer's unit is within Engagement Range of enemy models, but it must target one of those enemy units and can only be fired if the unit is not eligible to shoot other weapons.",
+      "Functionally identical to Close Quarters: a unit containing one or more models with a Pistol/Close Quarters weapon can shoot using close quarters shooting, targeting an enemy unit it's engaged with (or, for non-Monster/Vehicle models, only that weapon).",
     plainEnglish:
-      "Pistols are the only ranged weapons you can fire while locked in melee combat. If your unit is in close combat (within Engagement Range), you can still shoot your pistol at whoever you're fighting. You can't shoot any other guns though — it's pistols or nothing when you're in melee.",
+      "Pistols are one of the few ranged weapons you can fire while locked in melee combat, by using close quarters shooting to target whoever you're engaged with. The Core Rules note that Pistol is being phased out in favour of the clearer name Close Quarters — they work exactly the same way, so treat them as the same ability under two names.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
@@ -126,28 +128,28 @@ export const KEYWORDS: KeywordDefinition[] = [
   {
     name: "Hazardous",
     description:
-      "After resolving attacks with this weapon, roll one D6 for each Hazardous weapon fired. On a 1, the bearer's unit suffers 3 mortal wounds (or the bearer is destroyed if it's a Character, Monster, or Vehicle).",
+      "Each time a unit is selected to shoot or fight, after it resolves all of its attacks, make a hazard roll for that unit for each Hazardous weapon selected. A hazard roll fails on a 1-2, inflicting 1 mortal wound on the unit — or 3 mortal wounds if every model in the unit is a Monster/Vehicle.",
     plainEnglish:
-      "Powerful but risky — after shooting, you roll a die for each Hazardous weapon you fired. On a 1, your own unit takes 3 mortal wounds (or the model just dies if it's a Character/Monster/Vehicle). Think of plasma guns overheating. Usually worth the risk, but sometimes your own guy explodes.",
+      "Powerful but risky — after shooting or fighting, you make a hazard roll (D6) for each Hazardous weapon you used. It fails on a 1 or 2 (about a 1-in-3 chance), and your own unit takes 1 mortal wound — or 3 mortal wounds if the whole unit is Monsters/Vehicles. Think of plasma guns overheating. There's no automatic instant-kill for Characters anymore; it's always mortal wounds to the unit.",
     gameModes: ["40k", "combat_patrol"],
     examples: [
-      "A squad fires 3 plasma guns (Hazardous). After resolving shots, roll 3 dice — each 1 means 3 mortal wounds to your own unit.",
+      "A squad fires 3 plasma guns (Hazardous). After resolving shots, make 3 hazard rolls — each 1-2 means 1 mortal wound to your own unit.",
     ],
   },
   {
     name: "Precision",
     description:
-      "Critical hits (unmodified hit roll of 6) can target an attached Leader or Character model instead of the unit.",
+      "While resolving attacks made with one or more Precision weapons, at the start of the Allocation Order step, if the target unit contains a Character model visible to an attacking model, the attacker can select that Character's allocation group to be the current allocation group.",
     plainEnglish:
-      "Normally, you can't snipe Characters who are leading a unit — your hits get allocated to the bodyguard models first. Precision weapons can bypass this on a natural 6 to hit: those critical hits can be allocated directly to the Character. This is how you pick off enemy leaders hiding behind their squads.",
+      "Normally, you can't snipe Characters who are leading a unit — wounds get allocated to the bodyguard models first. Precision weapons let you jump the queue and allocate straight to a visible Character's group instead. Unlike earlier editions, this isn't tied to critical hits at all — any attack made with a Precision weapon can do this, as long as one of the weapons involved has the ability.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
     name: "Indirect Fire",
     description:
-      "This weapon can target units that are not visible to the bearer. When doing so, subtract 1 from hit rolls and the target gets the Benefit of Cover.",
+      "This weapon can target units that are not visible to the bearer using indirect shooting. The target gets the benefit of cover, you cannot reroll hit rolls, and an unmodified hit roll of 1-5 fails — unless the shooting unit Remained Stationary and the target is visible to another friendly unit, in which case only an unmodified hit roll of 1-3 fails.",
     plainEnglish:
-      "You can shoot at enemies you can't see — hidden behind walls, in buildings, whatever. But it's less accurate (-1 to hit) and the target gets cover (usually +1 to their save). Still very useful because some units hide all game; this forces them to move or take damage. Your opponent might not realise you can hit their hidden units.",
+      "You can shoot at enemies you can't see — hidden behind walls, buildings, whatever. It's much less reliable than it sounds, though: normally only a natural 6 to hit actually lands (rolls of 1-5 all fail), and the target still gets cover. Your one way to improve those odds is to stay stationary and have another one of your units actually see the target — then only 1-3 fail, meaning 4, 5, or 6 all hit. You also can't reroll indirect-fire hit rolls at all.",
     gameModes: ["40k", "combat_patrol"],
   },
 
@@ -167,33 +169,33 @@ export const KEYWORDS: KeywordDefinition[] = [
   {
     name: "Lone Operative",
     description:
-      "Unless it is within 12\" of an enemy unit, this unit can only be selected as the target of a ranged attack if the attacking model is within 12\".",
+      "Unless part of an attached unit, this unit is not visible to enemy models unless they are within 12\" of it, and it cannot be targeted by Indirect Fire weapons unless the attacking model is within 12\".",
     plainEnglish:
-      "This model is hard to shoot at range — enemies can only target it with ranged weapons if they're within 12\". Beyond that, it's basically invisible to enemy guns. Great for sneaky characters moving up the board. But once an enemy gets within 12\", the protection vanishes completely.",
+      "This model is hard to shoot at range — beyond 12\", enemies simply can't see it (and that also blocks Indirect Fire from hitting it at range). Great for sneaky characters moving up the board. But once an enemy gets within 12\", the protection vanishes completely — and if the model joins a unit as an attached Leader, it loses Lone Operative entirely while attached.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
     name: "Stealth",
     description:
-      "When targeted by ranged attacks, subtract 1 from the hit roll.",
+      "If every model in a unit has this ability, each time a ranged attack targets that unit, it has the benefit of cover against that attack.",
     plainEnglish:
-      "Enemies shooting at this unit take a -1 penalty to their hit rolls. Simple but effective — it turns a 3+ to hit into a 4+ to hit, which means roughly 17% fewer hits. Stacks with other to-hit penalties like cover, making the unit surprisingly hard to pin down at range.",
+      "This unit gets the benefit of cover against ranged attacks, on top of any cover it gets from terrain. It's no longer a flat -1 to the enemy's hit roll — it's the same 'Benefit of Cover' bonus terrain gives (typically +1 to the unit's armour save, capped so an unmodified 3+ is as good as it gets). It still stacks with actual terrain cover in the sense that being in cover doesn't grant it twice, but Stealth guarantees the bonus even in the open.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
     name: "Scouts",
     description:
-      "At the start of the first battle round, before the first turn, units with Scouts X can make a Normal move of up to X inches. Cannot end closer to enemy models.",
+      "In the Resolve Pre-battle Abilities step, if every model in a unit has Scouts X\", it can make a Normal move (or a scout move) of up to X inches, ending more than 8\" horizontally from all enemy units. Units in strategic reserves can instead be set up wholly within your deployment zone.",
     plainEnglish:
-      "Before the game even starts, this unit gets a free move — 'Scouts 6\"' means a free 6\" move at the very beginning. This lets you grab objectives early or get into a better position. You can't move closer to the enemy than you started, but it's still a big advantage for board control on turn 1.",
+      "Before the game even starts, this unit gets a free move — 'Scouts 6\"' means a free move of up to 6\" at the very beginning. This lets you grab objectives early or get into a better position, as long as you end more than 8\" from every enemy unit. A unit embarked in a Dedicated Transport can use this too, moving the transport itself, if every embarked model has Scouts.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
     name: "Deep Strike",
     description:
-      "During the Declare Battle Formations step, this unit can be set up in Reserves instead of on the battlefield. In the Reinforcements step of your Movement phase, set it up anywhere more than 9\" from enemy models.",
+      "Each time this unit makes an ingress move, if every model in the unit has this ability, it can be set up anywhere on the battlefield more than 8\" horizontally from all enemy units, even within your opponent's deployment zone.",
     plainEnglish:
-      "Instead of deploying on the table at the start, this unit waits off-board and drops in later — anywhere you want, as long as it's more than 9\" from enemies. This is incredibly flexible for getting behind enemy lines or grabbing undefended objectives. The downside: 9\" is far for a charge (you need a 9 on 2D6), so shooting units benefit more than melee units unless you have charge bonuses.",
+      "Instead of deploying on the table at the start, this unit waits in strategic reserves and drops in later via an ingress move — anywhere you want, as long as it's more than 8\" from enemies (not 9\" like older editions). This is incredibly flexible for getting behind enemy lines or grabbing undefended objectives. Like all Reserves now, it can't arrive before the second battle round.",
     gameModes: ["40k", "combat_patrol"],
   },
   {
@@ -218,9 +220,9 @@ export const KEYWORDS: KeywordDefinition[] = [
   {
     name: "Infiltrators",
     description:
-      "During deployment, this unit can be set up anywhere on the battlefield more than 9\" from enemy models and the enemy deployment zone.",
+      "During deployment, if every model in a unit has this ability, it can be set up anywhere on the battlefield more than 8\" horizontally from your opponent's deployment zone and all enemy units.",
     plainEnglish:
-      "Deploy this unit almost anywhere on the board instead of just your deployment zone — as long as it's 9\" from enemy models and their deployment zone. This is amazing for grabbing mid-board objectives on turn 1 or setting up early threat pressure. Unlike Deep Strike, Infiltrators are on the board from the start, so they score objectives immediately.",
+      "Deploy this unit almost anywhere on the board instead of just your deployment zone — as long as it's more than 8\" from enemy models and their deployment zone (not 9\" like older editions). This is amazing for grabbing mid-board objectives on turn 1 or setting up early threat pressure. Unlike Deep Strike, Infiltrators are on the board from the start, so they score objectives immediately.",
     gameModes: ["40k", "combat_patrol"],
   },
   {

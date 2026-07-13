@@ -40,6 +40,10 @@ function formatOverview(phases: Phase[], gameMode: GameMode): string {
     lines.push("");
   }
 
+  if (gameMode !== "kill_team") {
+    lines.push("> Reflects the Warhammer 40,000 11th Edition Core Rules.");
+  }
+
   return lines.join("\n");
 }
 
@@ -73,6 +77,10 @@ function formatCurrentPhase(
     lines.push(
       "---\nAfter this phase, the turn ends. Your opponent takes their turn, then it's back to the **Command Phase** for a new turn.",
     );
+  }
+
+  if (gameMode !== "kill_team") {
+    lines.push("> Reflects the Warhammer 40,000 11th Edition Core Rules.");
   }
 
   return lines.join("\n");

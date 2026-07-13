@@ -1,11 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ENHANCEMENTS } from "../data/enhancements.js";
+import { ENHANCEMENTS_11E } from "../data/enhancements-11e.js";
 import { fuzzySearch } from "../lib/search.js";
-import type { Enhancement } from "../types.js";
+import { formatModeStamp } from "../lib/format.js";
+import type { Enhancement, GameSystem } from "../types.js";
 
-function formatEnhancement(enh: Enhancement): string {
+function formatEnhancement(enh: Enhancement, gameSystem: GameSystem): string {
   const sections: string[] = [];
+
+  sections.push(formatModeStamp(gameSystem));
 
   const ptsStr = enh.points !== null ? `${enh.points} pts` : "?? pts";
   sections.push(
@@ -31,9 +35,18 @@ export function registerLookupEnhancement(server: McpServer): void {
         .string()
         .optional()
         .describe("Optional detachment filter (e.g. 'Gladius Task Force')"),
+      game_mode: z
+        .enum(["40k", "40k_10e", "40k_11e"])
+        .optional()
+        .describe(
+          "Edition: defaults to '40k_11e'. Pass '40k_10e' for 10th Edition enhancements, " +
+            "'40k'/'40k_11e' for 11th Edition (current default).",
+        ),
     },
-    async ({ name, faction, detachment }) => {
-      let candidates: Enhancement[] = [...ENHANCEMENTS];
+    async ({ name, faction, detachment, game_mode }) => {
+      const gameSystem: GameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
+      const pool = gameSystem === "wh40k-10e" ? ENHANCEMENTS : ENHANCEMENTS_11E;
+      let candidates: Enhancement[] = [...pool];
 
       if (faction) {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
@@ -59,7 +72,7 @@ export function registerLookupEnhancement(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: formatEnhancement(matches[0]),
+            text: formatEnhancement(matches[0], gameSystem),
           },
         ],
       };

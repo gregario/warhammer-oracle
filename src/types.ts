@@ -1,8 +1,8 @@
 // === Game Modes ===
 
-export type GameMode = "40k" | "combat_patrol" | "kill_team";
+export type GameMode = "40k" | "40k_10e" | "40k_11e" | "combat_patrol" | "kill_team";
 
-export type GameSystem = "wh40k-10e" | "wh40k-killteam";
+export type GameSystem = "wh40k-10e" | "wh40k-11e" | "wh40k-killteam";
 
 // === Unit Data (from BSData .cat files) ===
 
@@ -134,7 +134,7 @@ export type Stratagem = {
   name: string;
   faction: string;
   detachment: string | null;
-  type: "battle_tactic" | "epic_deed" | "strategic_ploy" | "wargear";
+  type: "battle_tactic" | "epic_deed" | "strategic_ploy" | "wargear" | "core";
   cpCost: number;
   phase: string;
   when: string;

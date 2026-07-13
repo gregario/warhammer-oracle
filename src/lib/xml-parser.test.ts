@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { parseCatalogue, parseKillTeamCatalogue, parseGameSystem, parseKillTeamGameSystem } from "./xml-parser.js";
+import {
+  parseCatalogue,
+  parseKillTeamCatalogue,
+  parseGameSystem,
+  parseKillTeamGameSystem,
+  parseEntryNode,
+  normalizeJsonNode,
+  extractFaction,
+} from "./xml-parser.js";
 
 // === 40K XML fixture ===
 
@@ -155,6 +163,100 @@ describe("parseCatalogue (40K)", () => {
     // Keywords (Faction: filtered out)
     expect(unit.keywords).toContain("Infantry");
     expect(unit.keywords).not.toContain("Faction: Imperium");
+  });
+});
+
+// === BSData/wh40k-11e JSON fixture (same schema, JSON-native shapes) ===
+
+const FIXTURE_11E_CAT_JSON = {
+  catalogue: {
+    id: "test-cat-11e",
+    name: "Imperium - Space Marines",
+    gameSystemId: "sys1",
+    selectionEntries: [
+      {
+        id: "unit-1",
+        name: "Intercessor Squad",
+        type: "unit",
+        hidden: false,
+        categoryLinks: [
+          { id: "cl-1", name: "Infantry", hidden: false },
+          { id: "cl-2", name: "Faction: Imperium", hidden: false },
+        ],
+        costs: [{ name: "pts", typeId: "51b2-306e-1021-d207", value: 80 }],
+        profiles: [
+          {
+            id: "p1",
+            name: "Intercessor",
+            typeId: "c547-1836-d8a-ff4f",
+            characteristics: [
+              { name: "M", typeId: "e703-ecb6-5ce7-aec1", $text: '6"' },
+              { name: "T", typeId: "d29d-cf75-fc2d-34a4", $text: "4" },
+              { name: "SV", typeId: "450a-a17e-9d5e-29da", $text: "3+" },
+              { name: "W", typeId: "750a-a2ec-90d3-21fe", $text: "2" },
+              { name: "LD", typeId: "58d2-b879-49c7-43bc", $text: "6+" },
+              { name: "OC", typeId: "bef7-942a-1a23-59f8", $text: "2" },
+            ],
+          },
+          {
+            id: "p2",
+            name: "Bolt Rifle",
+            typeId: "f77d-b953-8fa4-b762",
+            characteristics: [
+              { name: "Range", $text: '24"' },
+              { name: "A", $text: "2" },
+              { name: "BS", $text: "3+" },
+              { name: "S", $text: "4" },
+              { name: "AP", $text: "-1" },
+              { name: "D", $text: "1" },
+              { name: "Keywords", $text: "Assault, Heavy" },
+            ],
+          },
+          {
+            id: "p4",
+            name: "Shock Assault",
+            typeId: "9cc3-6d83-4dd3-9b64",
+            characteristics: [
+              {
+                name: "Description",
+                $text: "Each time this unit makes a charge move, until end of turn, add 1 to Attacks.",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+};
+
+describe("normalizeJsonNode (BSData 11e JSON)", () => {
+  it("normalizes a JSON catalogue node into the same shape parseEntryNode expects from XML", () => {
+    const normalized = normalizeJsonNode(FIXTURE_11E_CAT_JSON);
+    const catNode = normalized.catalogue;
+    const faction = extractFaction(catNode["@_name"]);
+    const entry = catNode.selectionEntries.selectionEntry[0];
+
+    const unit = parseEntryNode(entry, faction);
+    expect(unit).not.toBeNull();
+    expect(unit!.name).toBe("Intercessor Squad");
+    expect(unit!.faction).toBe("Space Marines");
+    expect(unit!.points).toBe(80);
+
+    expect(unit!.profiles).toHaveLength(1);
+    expect(unit!.profiles[0].movement).toBe('6"');
+    expect(unit!.profiles[0].toughness).toBe("4");
+    expect(unit!.profiles[0].save).toBe("3+");
+    expect(unit!.profiles[0].wounds).toBe("2");
+
+    expect(unit!.rangedWeapons).toHaveLength(1);
+    expect(unit!.rangedWeapons[0].name).toBe("Bolt Rifle");
+    expect(unit!.rangedWeapons[0].keywords).toEqual(["Assault", "Heavy"]);
+
+    expect(unit!.abilities).toHaveLength(1);
+    expect(unit!.abilities[0].name).toBe("Shock Assault");
+
+    expect(unit!.keywords).toContain("Infantry");
+    expect(unit!.keywords).not.toContain("Faction: Imperium");
   });
 });
 

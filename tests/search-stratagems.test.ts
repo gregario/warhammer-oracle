@@ -24,7 +24,7 @@ describe("search_stratagems", () => {
       arguments: { query: "re-roll" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-    expect(text).toContain("Command Re-roll");
+    expect(text).toContain("Command Re-Roll");
     expect(text).toContain("Warhammer 40,000");
   });
 

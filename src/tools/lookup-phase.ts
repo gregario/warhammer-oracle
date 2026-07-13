@@ -48,6 +48,10 @@ function formatPhase(phase: Phase): string {
     sections.push(`## Tips\n\n${tips.join("\n")}`);
   }
 
+  if (phase.gameMode !== "kill_team") {
+    sections.push("> Reflects the Warhammer 40,000 11th Edition Core Rules.");
+  }
+
   return sections.join("\n\n");
 }
 

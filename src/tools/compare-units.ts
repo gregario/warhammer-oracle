@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { UNITS } from "../data/units.js";
+import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
+import { formatModeStamp } from "../lib/format.js";
 import type {
   Unit,
   UnitProfile,
@@ -152,9 +154,12 @@ export function registerCompareUnits(server: McpServer): void {
         .max(4)
         .describe("Unit/operative names to compare (2-4 names)"),
       game_mode: z
-        .enum(["40k", "combat_patrol", "kill_team"])
+        .enum(["40k", "40k_10e", "40k_11e", "combat_patrol", "kill_team"])
         .optional()
-        .describe("Game mode: '40k' (default) compares 40K units, 'kill_team' compares Kill Team operatives"),
+        .describe(
+          "Game mode/edition: defaults to '40k_11e'. Pass '40k_10e' for 10th Edition units, " +
+            "'40k'/'40k_11e' for 11th Edition (current default), or 'kill_team' for Kill Team operatives.",
+        ),
     },
     async ({ units, game_mode }) => {
       if (game_mode === "kill_team") {
@@ -183,6 +188,7 @@ export function registerCompareUnits(server: McpServer): void {
         }
 
         const sections: string[] = [];
+        sections.push(formatModeStamp("wh40k-killteam"));
         sections.push(`# Kill Team Operative Comparison (${found.length} operatives)`);
 
         if (notFound.length > 0) {
@@ -204,12 +210,14 @@ export function registerCompareUnits(server: McpServer): void {
         };
       }
 
-      // Default: 40K units
+      // Default: 40K units (11th Edition unless 10th Edition is explicitly requested)
+      const gameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
+      const pool = gameSystem === "wh40k-10e" ? UNITS : UNITS_11E;
       const found: Unit[] = [];
       const notFound: string[] = [];
 
       for (const name of units) {
-        const matches = fuzzySearch(UNITS, name, ["name"]);
+        const matches = fuzzySearch(pool, name, ["name"]);
         if (matches.length > 0) {
           found.push(matches[0]);
         } else {
@@ -231,6 +239,7 @@ export function registerCompareUnits(server: McpServer): void {
 
       const sections: string[] = [];
 
+      sections.push(formatModeStamp(gameSystem));
       sections.push(`# Unit Comparison (${found.length} units)`);
 
       if (notFound.length > 0) {

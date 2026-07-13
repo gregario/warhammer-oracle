@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { UNITS } from "../data/units.js";
+import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
+import { formatModeStamp } from "../lib/format.js";
 import type {
   Unit,
   UnitProfile,
@@ -157,9 +159,12 @@ export function registerLookupUnit(server: McpServer): void {
         .optional()
         .describe("Optional faction name to narrow results (e.g. 'Chaos Space Marines', 'Astartes')"),
       game_mode: z
-        .enum(["40k", "combat_patrol", "kill_team"])
+        .enum(["40k", "40k_10e", "40k_11e", "combat_patrol", "kill_team"])
         .optional()
-        .describe("Game mode: '40k' (default) searches 40K units, 'kill_team' searches Kill Team operatives"),
+        .describe(
+          "Game mode/edition: defaults to '40k_11e'. Pass '40k_10e' for 10th Edition units, " +
+            "'40k'/'40k_11e' for 11th Edition (current default), or 'kill_team' for Kill Team operatives.",
+        ),
     },
     async ({ unit_name, faction, game_mode }) => {
       if (game_mode === "kill_team") {
@@ -189,14 +194,15 @@ export function registerLookupUnit(server: McpServer): void {
           content: [
             {
               type: "text" as const,
-              text: formatKTOperative(matches[0]),
+              text: `${formatModeStamp("wh40k-killteam")}\n\n${formatKTOperative(matches[0])}`,
             },
           ],
         };
       }
 
-      // Default: 40K units
-      let candidates: Unit[] = [...UNITS];
+      // Default: 40K units (11th Edition unless 10th Edition is explicitly requested)
+      const gameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
+      let candidates: Unit[] = [...(gameSystem === "wh40k-10e" ? UNITS : UNITS_11E)];
 
       if (faction) {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
@@ -223,7 +229,7 @@ export function registerLookupUnit(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: formatUnit(unit),
+            text: `${formatModeStamp(gameSystem)}\n\n${formatUnit(unit)}`,
           },
         ],
       };

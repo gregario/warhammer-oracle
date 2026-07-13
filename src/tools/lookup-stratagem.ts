@@ -24,6 +24,12 @@ function formatStratagem(strat: Stratagem): string {
     sections.push(`**Restrictions:** ${strat.restrictions}`);
   }
 
+  sections.push(
+    strat.faction === "Core"
+      ? "> Reflects the Warhammer 40,000 11th Edition Core Rules."
+      : "> Reflects the Warhammer 40,000 11th Edition faction pack for this detachment. Only a few factions/detachments are covered so far — others may still reflect 10th Edition Codexes or be missing entirely.",
+  );
+
   return sections.join("\n\n");
 }
 
@@ -74,11 +80,34 @@ export function registerLookupStratagem(server: McpServer): void {
         };
       }
 
+      // Some stratagem names recur across unrelated factions/detachments (e.g. "Spiteful
+      // Demise" exists for both Chaos Daemons and Chaos Knights). When the query is an
+      // exact name match against more than one such stratagem, don't silently guess —
+      // ask the caller to narrow it down with faction/detachment instead.
+      const lowerName = name.trim().toLowerCase();
+      const exactMatches = matches.filter((s) => s.name.toLowerCase() === lowerName);
+      const pool = exactMatches.length > 0 ? exactMatches : matches;
+      const distinctStratagems = new Set(pool.map((s) => `${s.faction}::${s.detachment}`));
+
+      if (exactMatches.length > 1 && distinctStratagems.size > 1) {
+        const options = pool
+          .map((s) => `- **${s.name}** (${s.faction}${s.detachment ? ` / ${s.detachment}` : ""})`)
+          .join("\n");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Multiple stratagems named "${pool[0].name}" exist across different factions/detachments. Please narrow the search with \`faction\` or \`detachment\`:\n\n${options}`,
+            },
+          ],
+        };
+      }
+
       return {
         content: [
           {
             type: "text" as const,
-            text: formatStratagem(matches[0]),
+            text: formatStratagem(pool[0]),
           },
         ],
       };
