@@ -19,8 +19,6 @@ Ask your AI assistant about datasheets, stratagems, detachments, enhancements, k
 
 **Editions:** 40K unit/detachment/enhancement lookups default to **11th Edition**. Pass `game_mode: "40k_10e"` to any of those tools for 10th Edition data instead — 10th Edition support isn't going away. Turn sequences/phases, core keywords, and Core Stratagems are hand-curated from the 11th Edition Core Rules. Detachment-specific stratagems are hand-curated per faction, layered the same way the tabletop rules are layered: an 11th Edition Faction Pack detachment overrides the base Codex where the pack details it in full, and the unrevised Codex baseline applies everywhere else. Space Marines, Chaos Space Marines, Chaos Daemons, Chaos Knights, Death Guard, Emperor's Children, Thousand Sons, World Eaters, T'au Empire, Black Templars, Adepta Sororitas, Genestealer Cults, Aeldari, Necrons, Space Wolves, Drukhari, Dark Angels, Imperial Knights, Adeptus Mechanicus, Leagues of Votann, Adeptus Custodes, Grey Knights, Deathwatch, Blood Angels, Orks, Agents of the Imperium, Tyranids, and Astra Militarum are done this way; other factions haven't been updated yet (the `lookup_stratagem`/`search_stratagems` tools note this per-stratagem).
 
-[![warhammer-oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
-
 ## Installation
 
 ```bash
