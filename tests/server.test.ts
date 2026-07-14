@@ -16,6 +16,7 @@ const EXPECTED_TOOLS = [
   "lookup_detachment",
   "lookup_enhancement",
   "lookup_ploy",
+  "determine_primary_mission",
 ] as const;
 
 describe("server integration", () => {
@@ -33,9 +34,9 @@ describe("server integration", () => {
     expect(server).toBeDefined();
   });
 
-  it("registers exactly 12 tools", async () => {
+  it("registers exactly 13 tools", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
   });
 
   it("registers all expected tool names", async () => {
@@ -101,6 +102,15 @@ describe("server integration", () => {
       const result = await client.callTool({
         name: "game_flow",
         arguments: {},
+      });
+      expect(result.content).toBeDefined();
+      expect(result.isError).toBeFalsy();
+    });
+
+    it("determine_primary_mission", async () => {
+      const result = await client.callTool({
+        name: "determine_primary_mission",
+        arguments: { your_disposition: "Take and Hold", opponent_disposition: "Disruption" },
       });
       expect(result.content).toBeDefined();
       expect(result.isError).toBeFalsy();

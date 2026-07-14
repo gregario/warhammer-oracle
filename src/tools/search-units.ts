@@ -4,7 +4,7 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
-import { formatModeStamp } from "../lib/format.js";
+import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type { Unit, KillTeamOperative } from "../types.js";
 
 const MAX_RESULTS = 10;
@@ -12,7 +12,7 @@ const MAX_RESULTS = 10;
 function formatCompactUnit(unit: Unit): string {
   const pointsStr = unit.points !== null ? `${unit.points}pts` : "pts N/A";
   const keywords = unit.keywords.length > 0 ? unit.keywords.join(", ") : "None";
-  return `**${unit.name}** (${unit.faction}) — ${pointsStr} — Keywords: ${keywords}`;
+  return `**${unit.name}** (${unit.faction}) — ${pointsStr} — ${formatUnitSize(unit.unitSize)} — Keywords: ${keywords}`;
 }
 
 function formatCompactOperative(op: KillTeamOperative): string {

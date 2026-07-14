@@ -60,6 +60,11 @@ export type Ability = {
   description: string;
 };
 
+export type UnitSize = {
+  min: number;
+  max: number;
+};
+
 export type Unit = {
   id: string;
   name: string;
@@ -70,6 +75,7 @@ export type Unit = {
   meleeWeapons: MeleeWeapon[];
   abilities: Ability[];
   points: number | null;
+  unitSize: UnitSize;
   gameSystem: GameSystem;
 };
 
@@ -142,6 +148,22 @@ export type Stratagem = {
   effect: string;
   restrictions?: string;
   gameModes: GameMode[];
+};
+
+// === Force Dispositions & Mission Matchups (hand-curated) ===
+
+export type Disposition =
+  | "Take and Hold"
+  | "Purge the Foe"
+  | "Reconnaissance"
+  | "Priority Assets"
+  | "Disruption";
+
+export type MissionMatchup = {
+  dispositionA: Disposition;
+  dispositionB: Disposition;
+  missionA: string;
+  missionB: string;
 };
 
 // === Kill Team Ploys (hand-curated) ===

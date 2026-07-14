@@ -90,6 +90,21 @@ describe("UNITS data integrity", () => {
     }
     expect(dupes).toEqual([]);
   });
+
+  it("every unit has a structurally valid unitSize (min >= 1, max >= min)", () => {
+    for (const unit of UNITS) {
+      expect(unit.unitSize.min, `${unit.faction} / ${unit.name}`).toBeGreaterThanOrEqual(1);
+      expect(unit.unitSize.max, `${unit.faction} / ${unit.name}`).toBeGreaterThanOrEqual(unit.unitSize.min);
+    }
+  });
+
+  it("Obliterators are a fixed 2-model unit (regression check for the bug that motivated unitSize)", () => {
+    const oblits = UNITS.filter((u) => u.name === "Obliterators");
+    expect(oblits.length).toBeGreaterThan(0);
+    for (const u of oblits) {
+      expect(u.unitSize).toEqual({ min: 2, max: 2 });
+    }
+  });
 });
 
 describe("UNITS_11E data integrity", () => {
@@ -156,6 +171,31 @@ describe("UNITS_11E data integrity", () => {
       seen.add(key);
     }
     expect(dupes).toEqual([]);
+  });
+
+  it("every unit has a structurally valid unitSize (min >= 1, max >= min)", () => {
+    for (const unit of UNITS_11E) {
+      expect(unit.unitSize.min, `${unit.faction} / ${unit.name}`).toBeGreaterThanOrEqual(1);
+      expect(unit.unitSize.max, `${unit.faction} / ${unit.name}`).toBeGreaterThanOrEqual(unit.unitSize.min);
+    }
+  });
+
+  it("Obliterators are a fixed 2-model unit (regression check for the bug that motivated unitSize)", () => {
+    const oblits = UNITS_11E.filter((u) => u.name === "Obliterators");
+    expect(oblits.length).toBeGreaterThan(0);
+    for (const u of oblits) {
+      expect(u.unitSize).toEqual({ min: 2, max: 2 });
+    }
+  });
+
+  it("matches known unit sizes verified against Wahapedia (Khorne Berzerkers 10-20, Noise Marines fixed 6)", () => {
+    const berzerkers = UNITS_11E.filter((u) => u.name === "Khorne Berzerkers");
+    expect(berzerkers.length).toBeGreaterThan(0);
+    for (const u of berzerkers) expect(u.unitSize).toEqual({ min: 10, max: 20 });
+
+    const noiseMarines = UNITS_11E.filter((u) => u.name === "Noise Marines");
+    expect(noiseMarines.length).toBeGreaterThan(0);
+    for (const u of noiseMarines) expect(u.unitSize).toEqual({ min: 6, max: 6 });
   });
 });
 

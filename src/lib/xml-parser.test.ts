@@ -7,6 +7,8 @@ import {
   parseEntryNode,
   normalizeJsonNode,
   extractFaction,
+  extractUnitSize,
+  xmlParser,
 } from "./xml-parser.js";
 
 // === 40K XML fixture ===
@@ -163,6 +165,136 @@ describe("parseCatalogue (40K)", () => {
     // Keywords (Faction: filtered out)
     expect(unit.keywords).toContain("Infantry");
     expect(unit.keywords).not.toContain("Faction: Imperium");
+
+    // Unit size (no composition sub-entries in this minimal fixture — defaults to 1)
+    expect(unit.unitSize).toEqual({ min: 1, max: 1 });
+  });
+});
+
+describe("extractUnitSize", () => {
+  it("defaults to exactly 1 model for a unit with no composition sub-entries (vehicle/single character)", () => {
+    const xml = `<selectionEntry id="u1" name="Rhino" type="unit" hidden="false"></selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 1, max: 1 });
+  });
+
+  it("sums an explicit min/max 'selections' constraint scoped to parent (fixed-size unit, e.g. Obliterators)", () => {
+    const xml = `<selectionEntry id="u1" name="Obliterators" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="m1" name="Obliterator" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="2" field="selections" scope="parent"/>
+            <constraint type="max" value="2" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 2, max: 2 });
+  });
+
+  it("sums a mandatory champion (1) plus a variable troop group (4-9) into a 5-10 total (e.g. Legionaries)", () => {
+    const xml = `<selectionEntry id="u1" name="Legionaries" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="c1" name="Aspiring Champion" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+      </selectionEntries>
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g1" name="4 - 9 Legionaries" hidden="false">
+          <constraints>
+            <constraint type="min" value="4" field="selections" scope="parent"/>
+            <constraint type="max" value="9" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 5, max: 10 });
+  });
+
+  it("treats an unconstrained group with inline content as exactly 1 model (e.g. a champion's weapon-option wrapper)", () => {
+    const xml = `<selectionEntry id="u1" name="Chaos Terminator Squad" type="unit" hidden="false">
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g1" name="Terminator Champion" hidden="false">
+          <selectionEntries>
+            <selectionEntry id="w1" name="Power fist" type="upgrade" hidden="false"/>
+          </selectionEntries>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 1, max: 1 });
+  });
+
+  it("ignores an unconstrained group with no inline content (pure entryLink reference, e.g. Crusade rules)", () => {
+    const xml = `<selectionEntry id="u1" name="Fabius Bile" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="c1" name="Fabius Bile" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+        <selectionEntry id="c2" name="Surgeon Acolyte" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+      </selectionEntries>
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g1" name="Crusade" hidden="false">
+          <entryLinks>
+            <entryLink id="l1" name="Mighty Champions" type="selectionEntryGroup" targetId="x" hidden="false" import="true"/>
+          </entryLinks>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 2, max: 2 });
+  });
+
+  it("skips hidden children entirely", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="c1" name="Model" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+        <selectionEntry id="c2" name="Hidden Bookkeeping Entry" type="upgrade" hidden="true">
+          <constraints>
+            <constraint type="min" value="5" field="selections" scope="parent"/>
+            <constraint type="max" value="5" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 1, max: 1 });
+  });
+
+  it("ignores roster-selection-limit constraints scoped to force (unrelated to model count)", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <constraints>
+        <constraint type="max" value="3" field="selections" scope="force"/>
+      </constraints>
+      <selectionEntries>
+        <selectionEntry id="c1" name="Model" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="2" field="selections" scope="parent"/>
+            <constraint type="max" value="2" field="selections" scope="parent"/>
+          </constraints>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 2, max: 2 });
   });
 });
 
@@ -257,6 +389,8 @@ describe("normalizeJsonNode (BSData 11e JSON)", () => {
 
     expect(unit!.keywords).toContain("Infantry");
     expect(unit!.keywords).not.toContain("Faction: Imperium");
+
+    expect(unit!.unitSize).toEqual({ min: 1, max: 1 });
   });
 });
 

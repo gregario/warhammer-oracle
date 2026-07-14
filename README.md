@@ -58,7 +58,7 @@ claude mcp add warhammer-oracle -- npx -y warhammer-oracle
 
 ### `lookup_unit`
 
-Look up a unit datasheet by name. Returns stat profiles, ranged and melee weapons, abilities, and keywords.
+Look up a unit datasheet by name. Returns stat profiles, unit size (model count), ranged and melee weapons, abilities, and keywords.
 
 ```
 "Look up the Intercessor Squad datasheet"
@@ -189,15 +189,26 @@ Calculate expected damage output for an attack profile against a target. Handles
 
 **Parameters:** `attacks`, `hit_skill`, `strength`, `toughness`, `armour_save`, `damage` (all required); `armour_penetration`, `invulnerable_save`, `feel_no_pain`, `reroll_hits`, `reroll_wounds`, `weapon_keywords`, `wounds_per_model`, `game_mode` (all optional)
 
+### `determine_primary_mission`
+
+Determine each player's Primary Mission from their Force Dispositions (11th Edition Matched Play). Each player's mission is looked up from their *opponent's* Force Disposition — in a non-mirror matchup, the two players get different missions. Returns mission names only, not full scoring/objective text (see [Data](#data) for why).
+
+```
+"I picked Take and Hold, my opponent picked Purge the Foe — what are our missions?"
+"What's my Primary Mission if I'm Reconnaissance and they're Priority Assets?"
+```
+
+**Parameters:** `your_disposition`, `opponent_disposition` (both required, one of: `Take and Hold`, `Purge the Foe`, `Reconnaissance`, `Priority Assets`, `Disruption`)
+
 ## Data
 
 All data is embedded at build time — no network calls at runtime.
 
 | Category | Count | Source |
 |---|---|---|
-| 40K unit datasheets (10th Edition) | 2,666 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e) |
-| 40K unit datasheets (11th Edition, default) | 2,695 | [BSData/wh40k-11e](https://github.com/BSData/wh40k-11e) |
-| Kill Team operatives | 506 | [BSData/wh40k-killteam](https://github.com/BSData/wh40k-killteam) |
+| 40K unit datasheets (10th Edition) | 2,666 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e), including per-unit model-count range (`unitSize`), derived from each datasheet's BattleScribe composition constraints |
+| 40K unit datasheets (11th Edition, default) | 2,695 | [BSData/wh40k-11e](https://github.com/BSData/wh40k-11e), including per-unit model-count range (`unitSize`) as above |
+| Kill Team operatives | 519 | [BSData/wh40k-killteam](https://github.com/BSData/wh40k-killteam) |
 | Detachments (10th / 11th Edition) | 208 / 259 | BSData (auto-extracted) |
 | Enhancements (10th / 11th Edition) | 827 / 895 | BSData (auto-extracted) |
 | Stratagems | 1,316 | Hand-curated — 10 Core Stratagems (11th Edition Core Rules) plus 1,306 detachment-specific, layered per the tabletop rules: an 11th Edition Faction Pack detachment overrides the Codex where it's detailed in full, the 10th Edition Codex baseline (via secondary sources — 40k.app and Wahapedia, whichever is more current) applies everywhere else. Space Marines (15/15 detachments), Chaos Space Marines (17/17), Chaos Daemons (9/9), Chaos Knights (8), Death Guard (9), Emperor's Children (10), Thousand Sons (9), World Eaters (8), T'au Empire (7), Black Templars (6 chapter-exclusive detachments layered on top of the shared Space Marines pool), Adepta Sororitas (8/8), Genestealer Cults (9/11 — 2 skipped, Boarding Actions-only), Aeldari (15/15 — Asuryani, Harlequins, Aeldari Corsairs, and Ynnari; Drukhari excluded, tracked as its own faction despite sharing BSData's "Aeldari" tag), Necrons (12/12), Space Wolves (7 chapter-exclusive detachments layered on top of the shared Space Marines pool), Drukhari (9/9, including 3 Drukhari/Harlequins-alliance detachments), Dark Angels (8 chapter-exclusive detachments layered on top of the shared Space Marines pool), Imperial Knights (8/8), Adeptus Mechanicus (10/10), Leagues of Votann (10/10), Adeptus Custodes (9/9, including the Sisters of Silence-flavoured Silent Hunters and Null Maiden Vigil detachments), Grey Knights (9/9), Deathwatch (1 chapter-exclusive detachment layered on top of the shared Space Marines pool), Blood Angels (8 chapter-exclusive detachments layered on top of the shared Space Marines pool), Orks (12/12 — 2 skipped, Boarding Actions-only), Agents of the Imperium (5/5), Tyranids (10/13 — 3 skipped, Boarding Actions-only), Astra Militarum (11/13 — 2 skipped, Boarding Actions-only) |
@@ -206,6 +217,7 @@ All data is embedded at build time — no network calls at runtime.
 | Shared rules (Kill Team) | 22 | BSData |
 | Curated keywords | 25 | Hand-written, plain English, 11th Edition Core Rules |
 | Game mode sequences | 3 | Hand-curated — 40K and Combat Patrol reflect the 11th Edition Core Rules; Kill Team is edition-agnostic |
+| Force Disposition mission matchups | 15 (5 Force Dispositions, full grid) | Hand-curated — 7 pairings verified directly from GW's free Warhammer Event Companion PDF, the remaining 8 from game-datamissions.com (fan-maintained), cross-validated cell-by-cell against the 7 verified pairings before being trusted. Mission *names* only — full scoring/objective text isn't freely published by GW and wasn't found reproduced in full by any fan site either, so it isn't included. Which Force Disposition(s) a given detachment can pick is also not yet tracked (conveyed via icon, not text, in the source PDFs) |
 
 ### Game modes
 

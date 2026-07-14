@@ -4,7 +4,7 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
-import { formatModeStamp } from "../lib/format.js";
+import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
   UnitProfile,
@@ -60,7 +60,9 @@ function formatUnit(unit: Unit): string {
   const sections: string[] = [];
 
   const pointsStr = unit.points !== null ? ` — ${unit.points} pts` : "";
-  sections.push(`## ${unit.name}\n\n**Faction:** ${unit.faction}${pointsStr}`);
+  sections.push(
+    `## ${unit.name}\n\n**Faction:** ${unit.faction}${pointsStr} | **Unit Size:** ${formatUnitSize(unit.unitSize)}`,
+  );
 
   sections.push(`### Unit Profiles\n\n${formatStatsTable(unit.profiles)}`);
 

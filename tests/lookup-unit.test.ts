@@ -114,6 +114,26 @@ describe("lookup_unit tool", () => {
     expect(text).toContain("Epic Hero");
   });
 
+  it("shows unit size for a fixed-size unit", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Obliterators", faction: "Chaos Space Marines", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Unit Size");
+    expect(text).toContain("2 models");
+  });
+
+  it("shows unit size as a range for a variable-size unit", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Legionaries", faction: "Chaos Space Marines", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Unit Size");
+    expect(text).toContain("5-10 models");
+  });
+
   it("returns friendly message for unknown unit", async () => {
     const result = await client.callTool({
       name: "lookup_unit",

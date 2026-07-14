@@ -1,4 +1,4 @@
-import type { GameSystem } from "../types.js";
+import type { GameSystem, UnitSize } from "../types.js";
 
 const MODE_STAMPS: Record<GameSystem, string> = {
   "wh40k-10e": "[Mode: 40k 10e]",
@@ -13,4 +13,11 @@ const MODE_STAMPS: Record<GameSystem, string> = {
  */
 export function formatModeStamp(gameSystem: GameSystem): string {
   return MODE_STAMPS[gameSystem];
+}
+
+/** "5-10 models" for a variable-size unit, or "1 model"/"2 models" for a fixed-size one. */
+export function formatUnitSize(size: UnitSize): string {
+  return size.min === size.max
+    ? `${size.min} model${size.min === 1 ? "" : "s"}`
+    : `${size.min}-${size.max} models`;
 }

@@ -5,6 +5,7 @@ import type {
   RangedWeapon,
   MeleeWeapon,
   Ability,
+  UnitSize,
   Detachment,
   Enhancement,
   KillTeamOperative,
@@ -37,6 +38,7 @@ const ARRAY_TAGS = [
   "rule",
   "entryLink",
   "catalogueLink",
+  "constraint",
 ];
 
 const parser = new XMLParser({
@@ -69,6 +71,8 @@ const ATTR_ALIAS_KEYS = new Set([
   "targetId",
   "value",
   "library",
+  "field",
+  "scope",
 ]);
 
 // BSData's 11e JSON represents repeatable elements as flat arrays (e.g.
@@ -90,6 +94,7 @@ const PLURAL_CONTAINER_KEYS: Record<string, string> = {
   sharedRules: "rule",
   infoLinks: "infoLink",
   catalogueLinks: "catalogueLink",
+  constraints: "constraint",
 };
 
 /**
@@ -273,6 +278,110 @@ function extractKeywords(entry: any): string[] {
     .filter((name: string) => !name.startsWith("Faction:"));
 }
 
+/**
+ * A child selectionEntry/selectionEntryGroup's own model-count range, read
+ * from its "selections" constraints scoped to "parent" — the BattleScribe
+ * convention for "how many of this specific slot are included when the
+ * containing unit is selected once" (as opposed to scope "force", which
+ * bounds how many copies of the whole unit a roster can include, and is
+ * unrelated to model count — see feedback_bsdata_constraint_semantics).
+ * Returns null if the child has no such constraint at all.
+ */
+function extractCountConstraint(node: any): UnitSize | null {
+  const constraints = ensureArray(node.constraints?.constraint);
+  let min: number | null = null;
+  let max: number | null = null;
+  for (const c of constraints) {
+    if (c["@_field"] !== "selections" || c["@_scope"] !== "parent") continue;
+    const value = Number(c["@_value"]);
+    if (c["@_type"] === "min") min = value;
+    else if (c["@_type"] === "max") max = value;
+  }
+  if (min === null && max === null) return null;
+  return { min: min ?? max!, max: max ?? min! };
+}
+
+/**
+ * Whether a child selectionEntry/selectionEntryGroup has any content of its
+ * own (inline sub-entries, sub-groups, or profiles) rather than being a
+ * pure entryLinks-only reference to shared content elsewhere — e.g. a
+ * character's "Crusade" group, which links out to the universal "Mighty
+ * Champions" narrative-play rules and has no inline content describing an
+ * actual model. Distinguishes a real (if unconstrained) model slot like
+ * "Terminator Champion" — which nests real inline weapon-option entries —
+ * from an unrelated rules/wargear-customization wrapper that happens to
+ * also lack an explicit count constraint.
+ */
+function hasOwnInlineContent(node: any): boolean {
+  return (
+    ensureArray(node.selectionEntries?.selectionEntry).length > 0 ||
+    ensureArray(node.selectionEntryGroups?.selectionEntryGroup).length > 0 ||
+    ensureArray(node.profiles?.profile).length > 0
+  );
+}
+
+/**
+ * Derive a unit's model-count range by summing the count contribution of
+ * each of its direct child selectionEntries/selectionEntryGroups — each
+ * represents one named model slot or troop-type block (e.g. a mandatory
+ * "Aspiring Champion" contributing exactly 1, plus a "4-9 Legionaries"
+ * group contributing 4-9, for a 5-10 total). A child with no explicit count
+ * constraint contributes exactly 1 if it has its own inline content (e.g. a
+ * champion's weapon-option wrapper group, representing a single mandatory
+ * model slot expressed via nested weapon choices rather than an explicit
+ * count) — but contributes nothing if it's a pure reference to shared
+ * content elsewhere (e.g. a "Crusade" rules group), since that isn't a
+ * model slot at all. Hidden children (background/bookkeeping constructs)
+ * are skipped entirely. A unit with no children at all (a vehicle or a
+ * single-model character with no loadout sub-entries) is exactly 1 model.
+ *
+ * A top-level entry whose own type is "model" (rather than "unit") IS
+ * itself one model — e.g. a named character or vehicle datasheet with no
+ * separate wrapping "unit" container, whose children are typically wargear
+ * or psychic-power choice groups rather than additional model slots — so it
+ * starts from a baseline of 1 before summing children. A "unit"-typed entry
+ * is a pure container whose entire count comes from its children (e.g.
+ * Legionaries: 0 baseline + "Aspiring Champion" (1) + "4-9 Legionaries"
+ * group = 5-10 total).
+ *
+ * Known limitation: a handful of units (e.g. Space Wolves' "Wolf Guard
+ * Headtakers") express their entire composition as entryLinks to shared
+ * library content rather than inline entries — hasOwnInlineContent can't
+ * see through that reference to know the link target is real troop data
+ * rather than an unrelated reference like a "Crusade" rules group, so such
+ * units compute to a bare 0 before the floor below applies. Properly
+ * resolving this would mean threading fetch-data.ts's global shared-entry
+ * index into this function; not done given how rare the pattern is.
+ * Falling back to exactly 1 is a deliberately conservative floor — never
+ * confidently assert a unit has 0 models, since every real unit has at
+ * least 1, even where the true composition (which may be larger) isn't
+ * recoverable here.
+ */
+function extractUnitSize(entry: any): UnitSize {
+  const children = [
+    ...ensureArray(entry.selectionEntries?.selectionEntry),
+    ...ensureArray(entry.selectionEntryGroups?.selectionEntryGroup),
+  ].filter((c: any) => c["@_hidden"] !== "true");
+
+  if (children.length === 0) return { min: 1, max: 1 };
+
+  const baseline = entry["@_type"] === "model" ? 1 : 0;
+  let totalMin = baseline;
+  let totalMax = baseline;
+  for (const child of children) {
+    const range = extractCountConstraint(child);
+    if (range) {
+      totalMin += range.min;
+      totalMax += range.max;
+    } else if (hasOwnInlineContent(child)) {
+      totalMin += 1;
+      totalMax += 1;
+    }
+  }
+  if (totalMax === 0) return { min: 1, max: 1 };
+  return { min: totalMin, max: totalMax };
+}
+
 // === Exported helpers for fetch-data.ts cross-catalogue resolution ===
 
 export { parser as xmlParser, ensureArray };
@@ -302,11 +411,12 @@ export function parseEntryNode(
     meleeWeapons: extractMeleeWeapons(profiles),
     abilities: extractAbilities(profiles),
     points: extractPoints(entry),
+    unitSize: extractUnitSize(entry),
     gameSystem: "wh40k-10e" as const,
   };
 }
 
-export { extractFaction, collectAllProfiles, buildRuleIndex };
+export { extractFaction, collectAllProfiles, buildRuleIndex, extractUnitSize };
 
 // === Public API ===
 
@@ -567,6 +677,7 @@ export function parseCatalogue(xml: string): Unit[] {
         meleeWeapons: extractMeleeWeapons(allProfiles),
         abilities: extractAbilities(allProfiles),
         points: extractPoints(entry),
+        unitSize: extractUnitSize(entry),
         gameSystem: "wh40k-10e" as const,
       };
     });
