@@ -235,30 +235,26 @@ function extractAbilities(profiles: any[]): Ability[] {
     });
 }
 
-/** Collect all profiles from direct profiles, sub-entries, and entry groups */
+/**
+ * Collect all profiles from an entry's own profiles plus every descendant
+ * selectionEntry/selectionEntryGroup, at any nesting depth — e.g. weapon
+ * profiles for units like Obliterators live 3 levels down (unit -> model
+ * sub-entry -> "Wargear" group -> weapon entry -> profiles), which a
+ * shallow 2-level-only traversal misses entirely. Does not follow
+ * entryLinks (references to shared content elsewhere by id) — that's a
+ * separate concern handled by collectAllProfilesWithGlobalLinks in
+ * fetch-data.ts, which calls this for the inline tree first.
+ */
 function collectAllProfiles(entry: any): any[] {
-  const directProfiles = ensureArray(entry.profiles?.profile);
+  const direct = ensureArray(entry.profiles?.profile);
 
-  // Profiles from selectionEntries (sub-entries)
   const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
-  const subProfiles = subEntries.flatMap((sub: any) =>
-    ensureArray(sub.profiles?.profile)
-  );
+  const subEntryProfiles = subEntries.flatMap((sub: any) => collectAllProfiles(sub));
 
-  // Profiles from selectionEntryGroups
-  const groups = ensureArray(
-    entry.selectionEntryGroups?.selectionEntryGroup
-  );
-  const groupProfiles = groups.flatMap((group: any) => {
-    const groupEntries = ensureArray(
-      group.selectionEntries?.selectionEntry
-    );
-    return groupEntries.flatMap((ge: any) =>
-      ensureArray(ge.profiles?.profile)
-    );
-  });
+  const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
+  const groupProfiles = groups.flatMap((group: any) => collectAllProfiles(group));
 
-  return [...directProfiles, ...subProfiles, ...groupProfiles];
+  return [...direct, ...subEntryProfiles, ...groupProfiles];
 }
 
 function extractPoints(entry: any): number | null {

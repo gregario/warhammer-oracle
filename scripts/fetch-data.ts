@@ -22,7 +22,6 @@ import {
   ensureArray,
   parseEntryNode,
   extractFaction,
-  collectAllProfiles,
   normalizeJsonNode,
 } from "../src/lib/xml-parser.js";
 import type { Unit, Detachment, Enhancement, KillTeamOperative } from "../src/types.js";
@@ -477,62 +476,80 @@ function parseEntryWithLinks(
   return parseEntryNode(entry, faction, profiles);
 }
 
-/** Like collectAllProfiles but resolves entryLinks against a global cross-catalogue index */
-function collectAllProfilesWithGlobalLinks(entry: any, globalIndex: Map<string, any>): any[] {
-  const profiles = collectAllProfiles(entry);
+/**
+ * entryLinks whose name matches one of these patterns point to a broad
+ * shared option pool (an entire faction's Enhancements catalogue, every
+ * Warlord Trait in the book, every Crusade Relic, every universal weapon-
+ * customization option in the game) rather than content specific to the
+ * unit that references it. Following these causes massive unrelated bloat
+ * — confirmed: one unit's "abilities" count ballooned from ~5 to ~397 by
+ * pulling in an entire shared Enhancements catalogue this way, because
+ * that link ("Dark Age Arsenal Enhancements") sat alongside the unit's own
+ * real content rather than being a node's sole content, so a purely
+ * structural "is this the only thing here" check doesn't reliably catch
+ * it either (a wanted reference, e.g. Astra Militarum's "Shock Trooper
+ * Sergeant", can legitimately sit alongside other real content too).
+ * These specific categories are already tracked as their own first-class
+ * data elsewhere in this project (Enhancements has its own parseEnhancements
+ * pipeline) or are out of scope (Crusade narrative rules, Warlord Trait
+ * eligibility) — this project doesn't need their content mixed into unit
+ * weapon/ability profiles.
+ */
+const UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN =
+  /enhancement|warlord|crusade|weapon modifications?|battle trait|battle scar|requisition/i;
 
-  // Resolve entryLinks on the entry itself
+/** Hard ceiling on profiles collected for one unit — a circuit breaker against
+ * any *other* unanticipated broad-shared-pool link category slipping through
+ * the denylist above and silently blowing up the output (as happened once
+ * already). A real datasheet never legitimately has this many profiles. */
+const MAX_PROFILES_PER_UNIT = 100;
+
+/**
+ * Like collectAllProfiles but also resolves entryLinks (references to
+ * shared content elsewhere by id) against a global cross-catalogue index,
+ * skipping links that match UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.
+ * `visited` guards against a cyclical entryLink chain turning into infinite
+ * recursion (not expected in real BSData, but this walks external
+ * references from a separately-fetched index rather than a pure inline
+ * tree, so it's cheap insurance).
+ */
+function collectAllProfilesWithGlobalLinks(
+  entry: any,
+  globalIndex: Map<string, any>,
+  visited: Set<string> = new Set(),
+): any[] {
+  const direct = ensureArray(entry.profiles?.profile);
+
   const entryLinks = ensureArray(entry.entryLinks?.entryLink);
-  for (const link of entryLinks) {
+  const linkedProfiles = entryLinks.flatMap((link: any) => {
     const targetId = link["@_targetId"];
-    if (targetId) {
-      const target = globalIndex.get(targetId);
-      if (target) {
-        profiles.push(...ensureArray(target.profiles?.profile));
-        // Also recurse into sub-entries of resolved target
-        const targetSubEntries = ensureArray(target.selectionEntries?.selectionEntry);
-        for (const sub of targetSubEntries) {
-          profiles.push(...ensureArray(sub.profiles?.profile));
-        }
-      }
-    }
-  }
+    const linkName = link["@_name"] ?? "";
+    if (!targetId || visited.has(targetId)) return [];
+    if (UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.test(linkName)) return [];
+    const target = globalIndex.get(targetId);
+    if (!target) return [];
+    visited.add(targetId);
+    return collectAllProfilesWithGlobalLinks(target, globalIndex, visited);
+  });
 
-  // Resolve entryLinks inside selectionEntryGroups
+  const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
+  const subEntryProfiles = subEntries.flatMap((sub: any) =>
+    collectAllProfilesWithGlobalLinks(sub, globalIndex, visited),
+  );
+
   const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
-  for (const group of groups) {
-    const groupLinks = ensureArray(group.entryLinks?.entryLink);
-    for (const link of groupLinks) {
-      const targetId = link["@_targetId"];
-      if (targetId) {
-        const target = globalIndex.get(targetId);
-        if (target) {
-          profiles.push(...ensureArray(target.profiles?.profile));
-          const targetSubEntries = ensureArray(target.selectionEntries?.selectionEntry);
-          for (const sub of targetSubEntries) {
-            profiles.push(...ensureArray(sub.profiles?.profile));
-          }
-        }
-      }
-    }
+  const groupProfiles = groups.flatMap((group: any) =>
+    collectAllProfilesWithGlobalLinks(group, globalIndex, visited),
+  );
 
-    // Also resolve entryLinks inside sub-selectionEntries of groups
-    const groupEntries = ensureArray(group.selectionEntries?.selectionEntry);
-    for (const ge of groupEntries) {
-      const geLinks = ensureArray(ge.entryLinks?.entryLink);
-      for (const link of geLinks) {
-        const targetId = link["@_targetId"];
-        if (targetId) {
-          const target = globalIndex.get(targetId);
-          if (target) {
-            profiles.push(...ensureArray(target.profiles?.profile));
-          }
-        }
-      }
-    }
+  const all = [...direct, ...linkedProfiles, ...subEntryProfiles, ...groupProfiles];
+  if (all.length > MAX_PROFILES_PER_UNIT) {
+    console.warn(
+      `  ⚠ ${entry["@_name"] ?? "?"}: ${all.length} profiles collected, exceeds ${MAX_PROFILES_PER_UNIT} — likely an unanticipated shared-pool link category; truncating`,
+    );
+    return all.slice(0, MAX_PROFILES_PER_UNIT);
   }
-
-  return profiles;
+  return all;
 }
 
 // ── Fetch Kill Team data ────────────────────────────────────────────────

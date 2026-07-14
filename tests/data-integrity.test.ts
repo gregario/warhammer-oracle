@@ -105,6 +105,27 @@ describe("UNITS data integrity", () => {
       expect(u.unitSize).toEqual({ min: 2, max: 2 });
     }
   });
+
+  it("Obliterators and Warp Talons have weapons (regression check for the deep-nesting weapon-extraction bug)", () => {
+    for (const name of ["Obliterators", "Warp Talons"]) {
+      const units = UNITS.filter((u) => u.name === name);
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) {
+        expect(u.rangedWeapons.length + u.meleeWeapons.length, `${name} (${u.faction})`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("fewer than 30 units have zero weapons (regression check — was 148 before the deep-nesting fix, is now ~15 legitimately unarmed units: terrain, transports, mines)", () => {
+    const zeroWeapons = UNITS.filter((u) => u.rangedWeapons.length === 0 && u.meleeWeapons.length === 0);
+    expect(zeroWeapons.length).toBeLessThan(30);
+  });
+
+  it("no unit has a runaway profile count from over-following a shared entryLink pool (regression check for the ~397-ability blowup bug)", () => {
+    for (const unit of UNITS) {
+      expect(unit.abilities.length, `${unit.faction} / ${unit.name}`).toBeLessThan(100);
+    }
+  });
 });
 
 describe("UNITS_11E data integrity", () => {
@@ -196,6 +217,37 @@ describe("UNITS_11E data integrity", () => {
     const noiseMarines = UNITS_11E.filter((u) => u.name === "Noise Marines");
     expect(noiseMarines.length).toBeGreaterThan(0);
     for (const u of noiseMarines) expect(u.unitSize).toEqual({ min: 6, max: 6 });
+  });
+
+  it("Obliterators and Warp Talons have weapons (regression check for the deep-nesting weapon-extraction bug)", () => {
+    for (const name of ["Obliterators", "Warp Talons"]) {
+      const units = UNITS_11E.filter((u) => u.name === name);
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) {
+        expect(u.rangedWeapons.length + u.meleeWeapons.length, `${name} (${u.faction})`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("Bloodletters, Ravenwing Command Squad, and Cadian Shock Troops have weapons (regression check for the entryLink weapon-reference gap)", () => {
+    for (const name of ["Bloodletters", "Ravenwing Command Squad", "Cadian Shock Troops"]) {
+      const units = UNITS_11E.filter((u) => u.name === name);
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) {
+        expect(u.rangedWeapons.length + u.meleeWeapons.length, `${name} (${u.faction})`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("fewer than 30 units have zero weapons (regression check — was 533 mid-fix before the entryLink denylist, is now ~15 legitimately unarmed units: terrain, transports, mines)", () => {
+    const zeroWeapons = UNITS_11E.filter((u) => u.rangedWeapons.length === 0 && u.meleeWeapons.length === 0);
+    expect(zeroWeapons.length).toBeLessThan(30);
+  });
+
+  it("no unit has a runaway profile count from over-following a shared entryLink pool (regression check for the ~397-ability blowup bug)", () => {
+    for (const unit of UNITS_11E) {
+      expect(unit.abilities.length, `${unit.faction} / ${unit.name}`).toBeLessThan(100);
+    }
   });
 });
 
