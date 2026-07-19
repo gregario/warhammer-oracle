@@ -8,6 +8,7 @@ import {
   normalizeJsonNode,
   extractFaction,
   extractUnitSize,
+  collectAllProfiles,
   xmlParser,
 } from "./xml-parser.js";
 
@@ -295,6 +296,103 @@ describe("extractUnitSize", () => {
     </selectionEntry>`;
     const entry = xmlParser.parse(xml).selectionEntry[0];
     expect(extractUnitSize(entry)).toEqual({ min: 2, max: 2 });
+  });
+});
+
+describe("rule-type infoLink resolution into abilities", () => {
+  const ruleIndex = new Map<string, any>([
+    [
+      "rule-deep-strike",
+      { "@_name": "Deep Strike", description: "Can be set up anywhere more than 9\" from the enemy." },
+    ],
+    ["rule-pistol", { "@_name": "Pistol", description: "This weapon can be used even in melee." }],
+    ["rule-no-description", { "@_name": "Stub Rule" }],
+  ]);
+
+  it("resolves a unit-level rule infoLink (e.g. Deep Strike) into an ability", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <infoLinks>
+        <infoLink id="l1" name="Deep Strike" hidden="false" type="rule" targetId="rule-deep-strike"/>
+      </infoLinks>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const profiles = collectAllProfiles(entry, ruleIndex);
+    const unit = parseEntryNode(entry, "Test Faction", profiles);
+
+    expect(unit!.abilities.map((a) => a.name)).toContain("Deep Strike");
+    expect(unit!.abilities.find((a) => a.name === "Deep Strike")!.description).toContain("9\"");
+  });
+
+  it("does not treat a nested weapon entry's rule infoLink (e.g. Pistol) as a unit ability", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <infoLinks>
+        <infoLink id="l1" name="Deep Strike" hidden="false" type="rule" targetId="rule-deep-strike"/>
+      </infoLinks>
+      <selectionEntries>
+        <selectionEntry id="w1" name="Bolt pistol" type="upgrade" hidden="false">
+          <profiles>
+            <profile id="wp1" name="Bolt pistol" typeId="f77d-b953-8fa4-b762">
+              <characteristics>
+                <characteristic name="Range">12"</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+          <infoLinks>
+            <infoLink id="l2" name="Pistol" hidden="false" type="rule" targetId="rule-pistol"/>
+          </infoLinks>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const profiles = collectAllProfiles(entry, ruleIndex);
+    const unit = parseEntryNode(entry, "Test Faction", profiles);
+
+    expect(unit!.abilities.map((a) => a.name)).toContain("Deep Strike");
+    expect(unit!.abilities.map((a) => a.name)).not.toContain("Pistol");
+  });
+
+  it("resolves rule infoLinks on nested model-type sub-entries (e.g. a champion)", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="m1" name="Champion" type="model" hidden="false">
+          <infoLinks>
+            <infoLink id="l1" name="Deep Strike" hidden="false" type="rule" targetId="rule-deep-strike"/>
+          </infoLinks>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const profiles = collectAllProfiles(entry, ruleIndex);
+    const unit = parseEntryNode(entry, "Test Faction", profiles);
+
+    expect(unit!.abilities.map((a) => a.name)).toContain("Deep Strike");
+  });
+
+  it("skips hidden infoLinks and rules with no description text", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <infoLinks>
+        <infoLink id="l1" name="Deep Strike" hidden="true" type="rule" targetId="rule-deep-strike"/>
+        <infoLink id="l2" name="Stub Rule" hidden="false" type="rule" targetId="rule-no-description"/>
+      </infoLinks>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const profiles = collectAllProfiles(entry, ruleIndex);
+    const unit = parseEntryNode(entry, "Test Faction", profiles);
+
+    expect(unit!.abilities).toHaveLength(0);
+  });
+
+  it("does not resolve rule infoLinks when no ruleIndex is given (backward compatible)", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <infoLinks>
+        <infoLink id="l1" name="Deep Strike" hidden="false" type="rule" targetId="rule-deep-strike"/>
+      </infoLinks>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const profiles = collectAllProfiles(entry);
+    const unit = parseEntryNode(entry, "Test Faction", profiles);
+
+    expect(unit!.abilities).toHaveLength(0);
   });
 });
 

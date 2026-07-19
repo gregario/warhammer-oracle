@@ -236,6 +236,60 @@ function extractAbilities(profiles: any[]): Ability[] {
 }
 
 /**
+ * Many named abilities (Deep Strike, Infiltrators, Scouts, Lone Operative,
+ * Feel No Pain, Leader, faction ones like Oath of Moment or Dark Pacts...)
+ * aren't given to a unit as an inline <profile> — they're referenced via an
+ * <infoLink type="rule"> pointing at the shared rule text (in the game
+ * system file or a catalogue's own rules/sharedRules), the same way a
+ * Detachment's ability can be inline or an infoLink (see
+ * extractDetachmentAbility). Without resolving these, any unit whose
+ * abilities are ALL infoLink-based has an empty abilities list, and one
+ * whose abilities are a mix (e.g. Chosen's inline inline abilities plus its
+ * "Dark Pacts" infoLink) is silently missing the linked ones.
+ *
+ * Returns synthetic profile-shaped objects (matching what extractAbilities
+ * expects) so callers can just concatenate them into the profiles array
+ * rather than threading a second parallel "abilities" collection everywhere.
+ *
+ * Only resolved on entries whose own type is "unit" or "model" — i.e.
+ * genuine datasheet/model slots (Chosen itself; a champion sub-model like
+ * "Chosen Champion"). Weapon items are always type "upgrade" in BSData, and
+ * carry this exact same infoLink shape for their own weapon-ability
+ * keywords (e.g. a Combi-weapon's infoLinks to "Anti", "Devastating
+ * Wounds", "Rapid Fire" — already surfaced via that profile's own Keywords
+ * characteristic/parseWeaponKeywords). Checking the entry's own profile
+ * type isn't enough to exclude these: some weapon items (e.g. a "Plasma
+ * pistol" wrapper choosing between standard/supercharge firing modes) carry
+ * their shared keywords like Pistol/Hazardous on the type="upgrade" wrapper
+ * while the actual Ranged/Melee weapon profiles live one level down on its
+ * child entries — without the type check those wrapper-level infoLinks were
+ * misfiled as unit-level abilities instead.
+ */
+function ruleLinksToAbilityProfiles(entry: any, ruleIndex: Map<string, any>): any[] {
+  const type = entry["@_type"];
+  if (type !== "unit" && type !== "model") return [];
+
+  const links = ensureArray(entry.infoLinks?.infoLink).filter(
+    (l: any) => l["@_type"] === "rule" && l["@_hidden"] !== "true",
+  );
+  const profiles: any[] = [];
+  for (const link of links) {
+    const targetId = link["@_targetId"];
+    if (!targetId) continue;
+    const rule = ruleIndex.get(targetId);
+    if (!rule || !rule.description) continue;
+    profiles.push({
+      "@_typeId": ABILITY_TYPE_ID,
+      "@_name": rule["@_name"] ?? link["@_name"] ?? "",
+      characteristics: {
+        characteristic: [{ "@_name": "Description", "#text": rule.description }],
+      },
+    });
+  }
+  return profiles;
+}
+
+/**
  * Collect all profiles from an entry's own profiles plus every descendant
  * selectionEntry/selectionEntryGroup, at any nesting depth — e.g. weapon
  * profiles for units like Obliterators live 3 levels down (unit -> model
@@ -244,17 +298,21 @@ function extractAbilities(profiles: any[]): Ability[] {
  * entryLinks (references to shared content elsewhere by id) — that's a
  * separate concern handled by collectAllProfilesWithGlobalLinks in
  * fetch-data.ts, which calls this for the inline tree first.
+ *
+ * `ruleIndex`, if given, also resolves each level's rule-type infoLinks
+ * (see ruleLinksToAbilityProfiles) into the returned profile list.
  */
-function collectAllProfiles(entry: any): any[] {
+function collectAllProfiles(entry: any, ruleIndex?: Map<string, any>): any[] {
   const direct = ensureArray(entry.profiles?.profile);
+  const ruleAbilities = ruleIndex ? ruleLinksToAbilityProfiles(entry, ruleIndex) : [];
 
   const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
-  const subEntryProfiles = subEntries.flatMap((sub: any) => collectAllProfiles(sub));
+  const subEntryProfiles = subEntries.flatMap((sub: any) => collectAllProfiles(sub, ruleIndex));
 
   const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
-  const groupProfiles = groups.flatMap((group: any) => collectAllProfiles(group));
+  const groupProfiles = groups.flatMap((group: any) => collectAllProfiles(group, ruleIndex));
 
-  return [...direct, ...subEntryProfiles, ...groupProfiles];
+  return [...direct, ...ruleAbilities, ...subEntryProfiles, ...groupProfiles];
 }
 
 function extractPoints(entry: any): number | null {
@@ -412,7 +470,7 @@ export function parseEntryNode(
   };
 }
 
-export { extractFaction, collectAllProfiles, buildRuleIndex, extractUnitSize };
+export { extractFaction, collectAllProfiles, buildRuleIndex, extractUnitSize, ruleLinksToAbilityProfiles };
 
 // === Public API ===
 

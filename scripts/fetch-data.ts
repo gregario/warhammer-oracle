@@ -23,6 +23,7 @@ import {
   parseEntryNode,
   extractFaction,
   normalizeJsonNode,
+  ruleLinksToAbilityProfiles,
 } from "../src/lib/xml-parser.js";
 import type { Unit, Detachment, Enhancement, KillTeamOperative } from "../src/types.js";
 
@@ -132,6 +133,11 @@ async function fetchCatalogueRepo(
   const allRules: { name: string; description: string }[] = [];
   // Also build a global shared entry index from the game system file
   const globalSharedIndex = new Map<string, any>();
+  // Global rule index (by id), for resolving infoLinks in detachment and unit
+  // entries. Populated here from the game system file's own rules/sharedRules
+  // — where universal core abilities like Deep Strike, Infiltrators, and Scouts
+  // actually live — then extended per-catalogue below.
+  const globalRuleIndex = new Map<string, any>();
 
   for (const gst of gameSystemFiles) {
     console.log(`  Fetching ${gst.path}...`);
@@ -151,6 +157,7 @@ async function fetchCatalogueRepo(
         continue;
       }
       allRules.push({ name: r["@_name"], description: r.description });
+      if (r["@_id"]) globalRuleIndex.set(r["@_id"], r);
     }
     console.log(
       `    → ${directRules.length + sharedRules.length - skipped} rules from ${gs["@_name"]}` +
@@ -189,9 +196,10 @@ async function fetchCatalogueRepo(
 
   console.log(`\n  Global shared entry index: ${globalSharedIndex.size} entries`);
 
-  // Build a global rule index for resolving infoLinks in detachment entries
-  // Some factions (e.g. Necrons) use infoLinks to reference shared rules instead of inline rules
-  const globalRuleIndex = new Map<string, any>();
+  // Extend the global rule index (seeded from the game system file above) with
+  // each catalogue's own rules/sharedRules — e.g. faction-specific abilities
+  // like Oath of Moment or Dark Pacts referenced via infoLink from a unit
+  // entry in that same catalogue.
   for (const cat of catalogues) {
     const catRules = buildRuleIndex(cat.raw);
     for (const [id, rule] of catRules) {
@@ -255,7 +263,7 @@ async function fetchCatalogueRepo(
     const directEntries = ensureArray(cat.raw.selectionEntries?.selectionEntry);
     const ownSharedEntries = ensureArray(cat.raw.sharedSelectionEntries?.selectionEntry);
     for (const entry of [...directEntries, ...ownSharedEntries]) {
-      const unit = parseEntryWithLinks(entry, faction, globalSharedIndex);
+      const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex);
       if (unit) catUnits.push(unit);
     }
 
@@ -270,7 +278,7 @@ async function fetchCatalogueRepo(
       const target = globalSharedIndex.get(targetId);
       if (!target) continue;
 
-      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, true);
+      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, true);
       if (unit) {
         // Use the link's id to avoid collisions with other factions using same shared entry
         const linkId = link["@_id"] || unit.id;
@@ -290,7 +298,7 @@ async function fetchCatalogueRepo(
       // Import the linked catalogue's own direct selectionEntries
       const linkedDirect = ensureArray(linkedCat.raw.selectionEntries?.selectionEntry);
       for (const entry of linkedDirect) {
-        const unit = parseEntryWithLinks(entry, faction, globalSharedIndex);
+        const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex);
         if (unit) catUnits.push(unit);
       }
 
@@ -304,7 +312,7 @@ async function fetchCatalogueRepo(
         const target = globalSharedIndex.get(targetId);
         if (!target) continue;
 
-        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, true);
+        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, true);
         if (unit) {
           const linkId = link["@_id"] || unit.id;
           catUnits.push({ ...unit, id: linkId });
@@ -459,6 +467,7 @@ function parseEntryWithLinks(
   entry: any,
   faction: string,
   globalIndex: Map<string, any>,
+  ruleIndex: Map<string, any>,
   unitOnly = false
 ): Unit | null {
   const type = entry["@_type"];
@@ -471,7 +480,7 @@ function parseEntryWithLinks(
   }
 
   // Collect all profiles including from entryLinks (resolved against global index)
-  const profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex);
+  const profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex);
 
   return parseEntryNode(entry, faction, profiles);
 }
@@ -514,7 +523,12 @@ const MAX_PROFILES_PER_UNIT = 100;
 /**
  * Like collectAllProfiles but also resolves entryLinks (references to
  * shared content elsewhere by id) against a global cross-catalogue index,
- * skipping links that match UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.
+ * skipping links that match UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN. Also
+ * resolves each level's rule-type infoLinks against `ruleIndex` (see
+ * ruleLinksToAbilityProfiles) — this is how named core/faction abilities
+ * like Deep Strike, Infiltrators, or Dark Pacts actually reach a unit's
+ * abilities list, since BSData references the shared rule text instead of
+ * duplicating it as an inline profile on every datasheet that has it.
  * `visited` guards against a cyclical entryLink chain turning into infinite
  * recursion (not expected in real BSData, but this walks external
  * references from a separately-fetched index rather than a pure inline
@@ -523,9 +537,11 @@ const MAX_PROFILES_PER_UNIT = 100;
 function collectAllProfilesWithGlobalLinks(
   entry: any,
   globalIndex: Map<string, any>,
+  ruleIndex: Map<string, any>,
   visited: Set<string> = new Set(),
 ): any[] {
   const direct = ensureArray(entry.profiles?.profile);
+  const ruleAbilities = ruleLinksToAbilityProfiles(entry, ruleIndex);
 
   const entryLinks = ensureArray(entry.entryLinks?.entryLink);
   const linkedProfiles = entryLinks.flatMap((link: any) => {
@@ -536,20 +552,20 @@ function collectAllProfilesWithGlobalLinks(
     const target = globalIndex.get(targetId);
     if (!target) return [];
     visited.add(targetId);
-    return collectAllProfilesWithGlobalLinks(target, globalIndex, visited);
+    return collectAllProfilesWithGlobalLinks(target, globalIndex, ruleIndex, visited);
   });
 
   const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
   const subEntryProfiles = subEntries.flatMap((sub: any) =>
-    collectAllProfilesWithGlobalLinks(sub, globalIndex, visited),
+    collectAllProfilesWithGlobalLinks(sub, globalIndex, ruleIndex, visited),
   );
 
   const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
   const groupProfiles = groups.flatMap((group: any) =>
-    collectAllProfilesWithGlobalLinks(group, globalIndex, visited),
+    collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, visited),
   );
 
-  const all = [...direct, ...linkedProfiles, ...subEntryProfiles, ...groupProfiles];
+  const all = [...direct, ...ruleAbilities, ...linkedProfiles, ...subEntryProfiles, ...groupProfiles];
   if (all.length > MAX_PROFILES_PER_UNIT) {
     console.warn(
       `  ⚠ ${entry["@_name"] ?? "?"}: ${all.length} profiles collected, exceeds ${MAX_PROFILES_PER_UNIT} — likely an unanticipated shared-pool link category; truncating`,
