@@ -494,9 +494,16 @@ function parseEntryWithLinks(
  * pipeline) or are out of scope (Crusade narrative rules, Warlord Trait
  * eligibility) — this project doesn't need their content mixed into unit
  * weapon/ability profiles.
+ *
+ * "boon" covers each Chaos legion's "Boons of <God>" / "Chaos Boons" group
+ * (confirmed via BSData/wh40k-11e: every such link resolves to a target
+ * whose own `comment` is "Crusade content") — without it, units like Chosen
+ * and Cultist Mob picked up mutation-flavoured abilities (Mutant Form,
+ * Massive Fangs, Scorpion Tail, Daemonic Flesh, Warp Stalker, Dark Blessing)
+ * that only apply after a Crusade boon roll, not on the base datasheet.
  */
 const UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN =
-  /enhancement|warlord|crusade|weapon modifications?|battle trait|battle scar|requisition/i;
+  /enhancement|warlord|crusade|weapon modifications?|battle trait|battle scar|requisition|boons?/i;
 
 /** Hard ceiling on profiles collected for one unit — a circuit breaker against
  * any *other* unanticipated broad-shared-pool link category slipping through
