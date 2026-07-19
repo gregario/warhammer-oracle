@@ -24,13 +24,22 @@ function formatCompactOperative(op: KillTeamOperative): string {
 export function registerSearchUnits(server: McpServer): void {
   server.tool(
     "search_units",
-    "Search Warhammer 40K units or Kill Team operatives by name, faction, or keywords. Returns a compact list of matching results (max 10).",
+    "Search Warhammer 40K units or Kill Team operatives by name, faction, keywords, or ability text. Returns a compact list of matching results (max 10).",
     {
-      query: z.string().describe("Search query — matches against name, faction, and keywords"),
+      query: z
+        .string()
+        .describe("Search query — matches against name, faction, keywords, and ability names/text"),
       faction: z
         .string()
         .optional()
         .describe("Optional faction filter to narrow results (e.g. 'Necrons', 'Aeldari')"),
+      ability: z
+        .string()
+        .optional()
+        .describe(
+          "Optional filter for units/operatives that have an ability whose name or rules text matches this " +
+            "(e.g. 'devastating wounds', 'stealth', 'deep strike'). Kill Team results also match unique actions.",
+        ),
       max_points: z
         .number()
         .optional()
@@ -43,19 +52,29 @@ export function registerSearchUnits(server: McpServer): void {
             "'40k'/'40k_11e' for 11th Edition (current default), or 'kill_team' for Kill Team operatives.",
         ),
     },
-    async ({ query, faction, max_points, game_mode }) => {
+    async ({ query, faction, ability, max_points, game_mode }) => {
       if (game_mode === "kill_team") {
         let candidates: KillTeamOperative[] = [...KILL_TEAM_OPERATIVES];
 
         if (faction) {
           candidates = fuzzySearch(candidates, faction, ["faction"]);
         }
+        if (ability) {
+          candidates = fuzzySearch(candidates, ability, ["abilities", "uniqueActions"]);
+        }
 
-        let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords"]);
+        let matches = fuzzySearch(candidates, query, [
+          "name",
+          "faction",
+          "keywords",
+          "abilities",
+          "uniqueActions",
+        ]);
 
         if (matches.length === 0) {
           const filters: string[] = [];
           if (faction) filters.push(`faction: "${faction}"`);
+          if (ability) filters.push(`ability: "${ability}"`);
           const filterStr = filters.length > 0 ? ` (filters: ${filters.join(", ")})` : "";
           return {
             content: [
@@ -92,8 +111,11 @@ export function registerSearchUnits(server: McpServer): void {
       if (faction) {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
       }
+      if (ability) {
+        candidates = fuzzySearch(candidates, ability, ["abilities"]);
+      }
 
-      let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords"]);
+      let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords", "abilities"]);
 
       if (max_points !== undefined) {
         matches = matches.filter(
@@ -104,6 +126,7 @@ export function registerSearchUnits(server: McpServer): void {
       if (matches.length === 0) {
         const filters: string[] = [];
         if (faction) filters.push(`faction: "${faction}"`);
+        if (ability) filters.push(`ability: "${ability}"`);
         if (max_points !== undefined) filters.push(`max points: ${max_points}`);
         const filterStr = filters.length > 0 ? ` (filters: ${filters.join(", ")})` : "";
         return {
