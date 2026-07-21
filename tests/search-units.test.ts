@@ -180,4 +180,17 @@ describe("search_units tool", () => {
     expect(text).toContain("**");
     expect(text).not.toContain("No Kill Team operatives found");
   });
+
+  it("finds Kroot via the faction filter even though BSData files them under T'au Empire", async () => {
+    // Kroot aren't their own top-level faction in BSData — they're a keyword-tagged
+    // sub-force inside the T'au Empire catalogue, so a plain faction match on the
+    // "faction" field alone finds nothing. The filter also checks keywords for this.
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "", faction: "Kroot" },
+    });
+    const text = getText(result);
+    expect(text).not.toContain("No units found");
+    expect(text).toContain("T'au Empire");
+  });
 });

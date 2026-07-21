@@ -32,7 +32,11 @@ export function registerSearchUnits(server: McpServer): void {
       faction: z
         .string()
         .optional()
-        .describe("Optional faction filter to narrow results (e.g. 'Necrons', 'Aeldari')"),
+        .describe(
+          "Optional faction filter to narrow results (e.g. 'Necrons', 'Aeldari'). Also matches keywords, " +
+            "so sub-forces folded into a parent faction's data (e.g. 'Kroot', which BSData files under " +
+            "'T'au Empire' rather than as its own faction) are still found.",
+        ),
       ability: z
         .string()
         .optional()
@@ -57,7 +61,7 @@ export function registerSearchUnits(server: McpServer): void {
         let candidates: KillTeamOperative[] = [...KILL_TEAM_OPERATIVES];
 
         if (faction) {
-          candidates = fuzzySearch(candidates, faction, ["faction"]);
+          candidates = fuzzySearch(candidates, faction, ["faction", "keywords"]);
         }
         if (ability) {
           candidates = fuzzySearch(candidates, ability, ["abilities", "uniqueActions"]);
@@ -109,7 +113,7 @@ export function registerSearchUnits(server: McpServer): void {
       let candidates: Unit[] = [...(gameSystem === "wh40k-10e" ? UNITS : UNITS_11E)];
 
       if (faction) {
-        candidates = fuzzySearch(candidates, faction, ["faction"]);
+        candidates = fuzzySearch(candidates, faction, ["faction", "keywords"]);
       }
       if (ability) {
         candidates = fuzzySearch(candidates, ability, ["abilities"]);
