@@ -1288,7 +1288,7 @@ export const ENHANCEMENTS_11E: Enhancement[] = [
     "name": "Eager for Vengeance",
     "faction": "Chaos Space Marines",
     "detachment": "Veterans",
-    "description": "The bearer’s unit is eligible to shoot and declare a charge in a turn in which it Fell Back. Each time a model in the bearer’s unit makes an attack that targets your focus of hatred, if the bearer’s unit Fell Back this turn, add 1 to the Hit roll, and each time you select your focus of hatred as a target of that unit’s charge, add 1 to the Charge roll.",
+    "description": "HERETIC ASTARTES model only (excluding DAMNED models). The bearer’s unit is eligible to shoot and declare a charge in a turn in which it Fell Back. Each time a model in the bearer’s unit makes an attack that targets your focus of hatred, if the bearer’s unit Fell Back this turn, add 1 to the Hit roll, and each time you select your focus of hatred as a target of that unit’s charge, add 1 to the Charge roll.",
     "points": 20,
     "gameSystem": "wh40k-11e"
   },
@@ -1315,7 +1315,7 @@ export const ENHANCEMENTS_11E: Enhancement[] = [
     "name": "Falsehood",
     "faction": "Chaos Space Marines",
     "detachment": "Deceptors",
-    "description": "In the Declare Battle Formations step, you can set up the bearer in Reserves instead of setting it up on the battlefield. If you do, in one of your Movement phases, you can select one model in a friendly **LEGIONARIES** or **CHOSEN** unit that has two or more models remaining and is on the battlefield (excluding Attached units).. The selected model is destroyed (ignoring any rules that are triggered when a model is destroyed) and the bearer is set up as close as possible to where that model was destroyed and only within Engagement Range of any units if the destroyed model was in Engagement Range of those units. The bearer now attaches to that unit as its Leader.",
+    "description": "In the Declare Battle Formations step, you can set up the bearer in Reserves instead of setting it up on the battlefield. If you do, in one of your Movement phases, you can select one friendly **LEGIONARIES** or **CHOSEN** unit that has two or more models remaining and is on the battlefield (excluding Attached units). The selected model is destroyed (ignoring any rules that are triggered when a model is destroyed) and the bearer is set up as close as possible to where that model was destroyed and only within Engagement Range of any units if the destroyed model was in Engagement Range of those units. The bearer now attaches to that unit as its Leader.",
     "points": 10,
     "gameSystem": "wh40k-11e"
   },
@@ -1486,7 +1486,7 @@ export const ENHANCEMENTS_11E: Enhancement[] = [
     "name": "Warped Foresight",
     "faction": "Chaos Space Marines",
     "detachment": "Chaos Cult",
-    "description": "While the bearer is leading a unit with the Scouts 6” ability, every model in the bearer’s unit has the Scouts 6” ability.",
+    "description": "DARK APOSTLE or DAMNED model only. While the bearer is leading a unit with the Scouts 6” ability, every model in the bearer’s unit has the Scouts 6” ability.",
     "points": 10,
     "gameSystem": "wh40k-11e"
   },
@@ -1603,7 +1603,7 @@ export const ENHANCEMENTS_11E: Enhancement[] = [
     "name": "Sorrowscent Vulture",
     "faction": "Chaos Space Marines",
     "detachment": "Nightmare Hunt",
-    "description": "Models in the bearer’s unit have the Scouts 6\" ability.\nIn the Declare Battle Formations step, the bearer can be attached to a Warp Talons unit.",
+    "description": "CHAOS LORD WITH JUMP PACK model only. Models in the bearer’s unit have the Scouts 6\" ability.\nIn the Declare Battle Formations step, the bearer can be attached to a Warp Talons unit.",
     "points": 35,
     "gameSystem": "wh40k-11e"
   },

@@ -481,7 +481,7 @@ export const DETACHMENTS_11E: Detachment[] = [
     "faction": "Chaos Space Marines",
     "ability": {
       "name": "Desperate Devotion",
-      "description": "Each time a ^^**Damned**^^ unit from your army with the Dark Pacts ability is selected to make a Normal or Advance move or declare a charge (excluding units that arrived from Reserves this turn) it can make a Desperate Pact. If it does, until the end of the phase, add 2\" to the Move characteristic of models in that unit and add 2 to Charge rolls made for that unit.\n\n\nDesperate Pacts\nEach time a unit makes a Desperate Pact, it must first take a Leadership test; if that test is failed, the unit suffers D3 mortal wounds before any effects of the Desperate Pact are resolved."
+      "description": "Each time a ^^**Damned**^^ unit from your army with the Dark Pacts ability is selected to make a Normal or Advance move or declare a charge (excluding units that arrived from Reserves this turn) it can make a Desperate Pact. If it does, until the end of the phase, add 2\" to the Move characteristic of models in that unit and add 2 to Charge rolls made for that unit.\n\n\nDesperate Pacts\nEach time a unit makes a Desperate Pact, it must first take a Leadership test; if that test is failed, the unit suffers D3 mortal wounds before any effects of the Desperate Pact are resolved.\n\nKeywords: TRAITOR GUARDSMEN SQUAD units from your army gain the BATTLELINE keyword. [MANUAL PATCH 2026-07-22: Faction Pack v1.1 Rules Update, not yet in BSData/wh40k-11e -- see docs/design/11e-support.md.]"
     },
     "gameSystem": "wh40k-11e"
   },
@@ -511,7 +511,7 @@ export const DETACHMENTS_11E: Detachment[] = [
     "faction": "Chaos Space Marines",
     "ability": {
       "name": "Empyric Wellspring",
-      "description": "- In your Shooting phase, when a friendly **HERETIC ASTARTES PSYKER** unit (excluding **DAEMON** units) is **selected to shoot**, if that unit makes a **Dark Pact**, that unit’s ranged attacks have +1 **S**. \n- In the Fight phase, when a friendly **HERETIC ASTARTES DAEMON PRINCE** unit (excluding **KHORNE** units) is **selected to fight**, if that unit makes a **Dark Pact**, that unit’s melee attacks have: \n- +2 **S**. \n- +1 **AP**. "
+      "description": "- In your Shooting phase, when a friendly **HERETIC ASTARTES PSYKER** unit (excluding **DAEMON** units) is **selected to shoot**, if that unit makes a **Dark Pact**, that unit’s ranged attacks have +1 **S**. \n- In the Fight phase, when a friendly **HERETIC ASTARTES DAEMON PRINCE/DAEMON PRINCE WITH WINGS** unit (excluding **KHORNE** units) is **selected to fight**, if that unit makes a **Dark Pact**, that unit’s melee attacks have: \n- +2 **S**. \n- +1 **AP**.  [MANUAL PATCH 2026-07-22: Faction Pack v1.1 added DAEMON PRINCE WITH WINGS to this trigger; BSData/wh40k-11e had not synced it yet as of this date -- see docs/design/11e-support.md, reconcile/remove once fetch-data.ts pulls the real update.]"
     },
     "gameSystem": "wh40k-11e"
   },
