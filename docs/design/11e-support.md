@@ -238,6 +238,20 @@ Also noted, not yet acted on: GW released a companion **"Universal Rules Updates
 
 Rebuilt (`npm run build`) and ran the full suite (`npm test`, 309/309 passing) after applying the above.
 
+## Follow-up (2026-07-24): routine BSData sync clobbered the v1.1 manual patches — restored, still not synced
+
+Ran a normal `npm run fetch-data` update (per user request, no known issue driving it — just picking up whatever's landed on BSData since 2026-07-19). Confirmed via the GitHub API that BSData had picked up 7 small routine fixes since then (Astra Militarum Scouts wording, Drukhari Mandrake/Dark Vitality points, Necrons Ophydian Destroyers points, Adepta Sororitas Chorus of Condemnation card-consistency, Chaos Daemons Prince enhancement-eligibility) — none of them the CSM v1.1 errata logged above.
+
+As expected from the note in that entry (these patches live only in the generated files, "intentionally temporary and fragile to the next real regen"), the regeneration silently reverted all 6 of the manual patches back to the stale BSData text: Dark Pacts' BATTLELINE keyword grant, Cabal of Chaos's DAEMON PRINCE WITH WINGS trigger, and the four enhancement bearer-restriction/wording fixes (Eager for Vengeance, Falsehood, Warped Foresight, Sorrowscent Vulture). Caught this by diffing the regenerated files against the pre-regen commit rather than just trusting the fetch output, since the design doc itself flagged this exact risk. Confirmed directly from the freshly-fetched content (not just a commit-message search) that BSData genuinely still hasn't synced any of these — the reverted text is the same stale wording the original 2026-07-22 patch described, not some independently-changed variant.
+
+Restored all 6 patches on top of the fresh regeneration, updating each `[MANUAL PATCH ...]` note to record it was reconfirmed still-needed on this date rather than dating them as new. `stratagems.ts` (hand-curated, not touched by `fetch-data.ts`) was unaffected — its 6 patched stratagems were never at risk.
+
+**Process note for next time:** hand-editing the generated `.ts` files directly (rather than via a script) hit a real footgun — passing literal `\n` sequences through a `node -e` inline argument via the Bash tool did not survive as the intended two-character `\` + `n` escape; it collapsed to an actual newline character, which corrupted `detachments-11e.ts`'s JSON-in-TS syntax badly enough to fail `tsc` outright (caught immediately by running it, not left unnoticed). Recovered by writing a small standalone `.mjs` script to disk (via the Write tool, which isn't subject to that shell-escaping layer) that merged the corrupted physical lines back into one logical line using `String.fromCharCode(92) + "n"` to construct the literal escape unambiguously, then re-verified with `tsc --noEmit` before proceeding. **Lesson: when a generated data file needs a literal `\n` (or similar escape) inserted via a shell command, don't trust an inline `node -e`/similar one-liner's escaping through this Bash tool — write the transform to a script file first, or use the Edit tool's exact-string-match (safe, not shell-processed) instead.**
+
+This will keep happening on every `fetch-data` pull until BSData actually syncs the CSM v1.1 errata — worth checking `Chaos - Chaos Space Marines.json` specifically (Dark Pacts / Empyric Wellspring / the four enhancements above) before future routine syncs, and removing the manual patches for good once it does.
+
+Rebuilt and ran the full suite (309/309 passing) after restoring the patches.
+
 ---
 
 ## Why this doc exists
