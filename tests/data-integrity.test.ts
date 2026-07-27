@@ -249,6 +249,34 @@ describe("UNITS_11E data integrity", () => {
       expect(unit.abilities.length, `${unit.faction} / ${unit.name}`).toBeLessThan(100);
     }
   });
+
+  it("Chaos Space Marines vehicles/named characters carry the Heretic Astartes keyword (regression check for the 'Faction: X' categoryLink being dropped entirely instead of just un-prefixed)", () => {
+    for (const name of ["Chaos Predator Annihilator", "Chaos Predator Destructor", "Defiler", "Helbrute", "Chosen"]) {
+      const units = UNITS_11E.filter((u) => u.name === name && u.faction === "Chaos Space Marines");
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) {
+        expect(u.keywords, `${name} (${u.faction})`).toContain("Heretic Astartes");
+      }
+    }
+  });
+
+  it("most Chaos Space Marines units carry Heretic Astartes (Daemon-ally exceptions like Nurglings/Bloodletters legitimately don't)", () => {
+    const csm = UNITS_11E.filter((u) => u.faction === "Chaos Space Marines");
+    const withKeyword = csm.filter((u) => u.keywords.includes("Heretic Astartes"));
+    expect(withKeyword.length / csm.length).toBeGreaterThan(0.7);
+  });
+
+  it("units generally carry their catalogue's army-wide keyword, not just faction-string metadata (Space Marines / Adeptus Astartes, Necrons / Necrons)", () => {
+    const marines = UNITS_11E.filter((u) => u.faction === "Adeptus Astartes - Space Marines");
+    expect(marines.length).toBeGreaterThan(0);
+    const marinesWithKeyword = marines.filter((u) => u.keywords.includes("Adeptus Astartes"));
+    expect(marinesWithKeyword.length / marines.length).toBeGreaterThan(0.5);
+
+    const necrons = UNITS_11E.filter((u) => u.faction === "Necrons");
+    expect(necrons.length).toBeGreaterThan(0);
+    const necronsWithKeyword = necrons.filter((u) => u.keywords.includes("Necrons"));
+    expect(necronsWithKeyword.length / necrons.length).toBeGreaterThan(0.5);
+  });
 });
 
 describe("DETACHMENTS_11E / ENHANCEMENTS_11E data integrity", () => {

@@ -324,12 +324,26 @@ function extractPoints(entry: any): number | null {
   return Number(ptsCost["@_value"]);
 }
 
+/**
+ * BSData's "Faction: X" categoryLinks are NOT redundant bookkeeping that
+ * duplicates the catalogue-derived `faction` field — they're how the actual
+ * army-wide rules keyword (HERETIC ASTARTES, ADEPTUS ASTARTES, NECRONS,
+ * ORKS, ...) is attached per-unit, the same keyword that ability/enhancement/
+ * stratagem text constantly gates on (e.g. "HERETIC ASTARTES model only").
+ * Previously dropped entirely (`!name.startsWith("Faction:")`), which is why
+ * every unit in some catalogues (confirmed: all 137 Chaos Space Marines
+ * units) had zero army-keyword tag at all. Multi-catalogue-embedded legions
+ * also use this same mechanism for their own sub-tag (e.g. 10e's CSM
+ * catalogue embeds Emperor's Children units tagged "Faction: Emperor's
+ * Children" alongside the shared "Faction: Heretic Astartes"), so this
+ * strips only the "Faction: " label prefix and keeps the value as a normal
+ * keyword, rather than dropping the category link altogether.
+ */
 function extractKeywords(entry: any): string[] {
   const links = ensureArray(entry.categoryLinks?.categoryLink);
   return links
     .filter((cl: any) => cl["@_hidden"] !== "true")
-    .map((cl: any) => cl["@_name"] as string)
-    .filter((name: string) => !name.startsWith("Faction:"));
+    .map((cl: any) => (cl["@_name"] as string).replace(/^Faction:\s*/, ""));
 }
 
 /**

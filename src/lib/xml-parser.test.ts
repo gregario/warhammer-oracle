@@ -163,8 +163,9 @@ describe("parseCatalogue (40K)", () => {
     expect(unit.abilities).toHaveLength(1);
     expect(unit.abilities[0].name).toBe("Shock Assault");
 
-    // Keywords (Faction: filtered out)
+    // Keywords ("Faction: " prefix stripped, but the army keyword itself kept)
     expect(unit.keywords).toContain("Infantry");
+    expect(unit.keywords).toContain("Imperium");
     expect(unit.keywords).not.toContain("Faction: Imperium");
 
     // Unit size (no composition sub-entries in this minimal fixture — defaults to 1)
@@ -486,6 +487,7 @@ describe("normalizeJsonNode (BSData 11e JSON)", () => {
     expect(unit!.abilities[0].name).toBe("Shock Assault");
 
     expect(unit!.keywords).toContain("Infantry");
+    expect(unit!.keywords).toContain("Imperium");
     expect(unit!.keywords).not.toContain("Faction: Imperium");
 
     expect(unit!.unitSize).toEqual({ min: 1, max: 1 });
