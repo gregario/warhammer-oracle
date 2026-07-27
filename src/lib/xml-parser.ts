@@ -815,11 +815,11 @@ function extractDetachmentPoints(entry: any): number | null {
 /**
  * Which Force Disposition(s) a detachment can select when mustering, read
  * from its categoryLinks. BSData tags each detachment selectionEntry with
- * one (occasionally two) of the five disposition names alongside unrelated
- * decorative/narrative tags (e.g. "3DP Detachment", "Doomed", "Grace",
- * "Nightmare") that aren't real dispositions — filtered out by only keeping
- * names that match one of the five known values. 11th Edition only, same as
- * extractDetachmentPoints above.
+ * one (occasionally two) of the five disposition names alongside other,
+ * unrelated categoryLinks — a "3DP Detachment" redundancy flag, and
+ * mutual-exclusion tags (see extractDetachmentRestrictionTags below) —
+ * filtered out here by only keeping names that match one of the five known
+ * values. 11th Edition only, same as extractDetachmentPoints above.
  */
 function extractDetachmentDispositions(entry: any): Disposition[] {
   const links = ensureArray(entry.categoryLinks?.categoryLink);
@@ -827,6 +827,40 @@ function extractDetachmentDispositions(entry: any): Disposition[] {
     .filter((cl: any) => cl["@_hidden"] !== "true")
     .map((cl: any) => cl["@_name"] as string);
   return KNOWN_DISPOSITIONS.filter((d) => names.includes(d));
+}
+
+/**
+ * A detachment's mutual-exclusion tag(s) (e.g. "Nightmare", "Doomed",
+ * "Grace", "Covens", "Kabal") — confirmed against BSData/wh40k-11e's own
+ * rule text, which spells this out explicitly on (at least) one member of
+ * each pair/group: "This detachment has the NIGHTMARE tag and cannot be
+ * taken with another NIGHTMARE detachment." (Chaos Space Marines'
+ * Murdertalon Raiders). These are just the categoryLinks left over once the
+ * five known dispositions and the "NDP Detachment" redundancy flag are
+ * removed — every other categoryLink checked on a detachment turned out to
+ * follow this same pattern, always appearing on exactly the other
+ * detachment(s) it's mutually exclusive with (Space Marines' "Doomed" is a
+ * rare 3-way group: The Lost Brethren/Rage-Cursed Onslaught/Wrath of the
+ * Doomed, no two of which can be combined).
+ *
+ * Gated on extractDetachmentPoints being non-null (i.e. this is a real
+ * 11e-tagged detachment) rather than trusting "not a known disposition" the
+ * way extractDetachmentDispositions can: 10e detachments have no Detachment
+ * Points concept at all but can still carry an unrelated, coincidental
+ * categoryLink (e.g. a stray "Grenades" tag was found on 10e's own "Gladius
+ * Task Force" entry) that would otherwise be wrongly reported as a
+ * restriction tag.
+ */
+function extractDetachmentRestrictionTags(entry: any): string[] {
+  if (extractDetachmentPoints(entry) === null) return [];
+
+  const links = ensureArray(entry.categoryLinks?.categoryLink);
+  const names = links
+    .filter((cl: any) => cl["@_hidden"] !== "true")
+    .map((cl: any) => cl["@_name"] as string)
+    .filter((name: string) => !KNOWN_DISPOSITIONS.includes(name as Disposition))
+    .filter((name: string) => !/^\dDP Detachment$/i.test(name));
+  return [...new Set(names)];
 }
 
 /**
@@ -1007,6 +1041,7 @@ export function parseDetachments(
       ability,
       detachmentPoints: extractDetachmentPoints(entry),
       dispositions: extractDetachmentDispositions(entry),
+      restrictionTags: extractDetachmentRestrictionTags(entry),
       gameSystem: "wh40k-10e" as const,
     });
   }

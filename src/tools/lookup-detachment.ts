@@ -14,6 +14,7 @@ function formatDetachment(
   enhancements: Enhancement[],
   stratagems: Stratagem[],
   gameSystem: GameSystem,
+  allDetachments: Detachment[],
 ): string {
   const sections: string[] = [];
 
@@ -34,6 +35,23 @@ function formatDetachment(
         `2 DP at Incursion, 3 DP at Strike Force. A single detachment whose own DP value (shown above) exceeds ` +
         `that cap is still legal on its own (e.g. a 3 DP detachment at Incursion) — the cap only stops you from ` +
         `combining multiple detachments whose DP adds up past the limit.`,
+    );
+  }
+
+  if (det.restrictionTags.length > 0) {
+    const exclusiveWith = allDetachments.filter(
+      (other) =>
+        other.faction === det.faction &&
+        other.id !== det.id &&
+        other.restrictionTags.some((tag) => det.restrictionTags.includes(tag)),
+    );
+    const namesPart =
+      exclusiveWith.length > 0
+        ? `: ${exclusiveWith.map((d) => `**${d.name}**`).join(", ")}`
+        : " (no other detachment currently sharing this tag was found in the data)";
+    sections.push(
+      `> **Mutually exclusive** (tag${det.restrictionTags.length > 1 ? "s" : ""}: ${det.restrictionTags.join(", ")}) — ` +
+        `cannot be used in the same army as${namesPart}.`,
     );
   }
 
@@ -65,7 +83,9 @@ export function registerLookupDetachment(server: McpServer): void {
   server.tool(
     "lookup_detachment",
     "Look up a Warhammer 40,000 detachment by name. Returns the detachment ability, available enhancements, " +
-      "associated stratagems, and (11th Edition only) its Detachment Points cost and eligible Force Disposition(s).",
+      "associated stratagems, and (11th Edition only) its Detachment Points cost, eligible Force Disposition(s), " +
+      "and any other detachment(s) it's mutually exclusive with (e.g. Chaos Space Marines' Murdertalon Raiders " +
+      "and Nightmare Hunt cannot both be used in the same army).",
     {
       name: z.string().describe("Name or partial name of the detachment to look up"),
       faction: z
@@ -120,7 +140,7 @@ export function registerLookupDetachment(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: formatDetachment(det, relatedEnhancements, relatedStratagems, gameSystem),
+            text: formatDetachment(det, relatedEnhancements, relatedStratagems, gameSystem, detachmentsPool),
           },
         ],
       };

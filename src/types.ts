@@ -125,6 +125,15 @@ export type Detachment = {
   detachmentPoints: number | null;
   /** Which Force Disposition(s) this detachment can select when mustering. 11th Edition only — always [] for 10e data. */
   dispositions: Disposition[];
+  /**
+   * Mutual-exclusion tag(s) from BSData (e.g. "Nightmare", "Doomed", "Grace",
+   * "Covens"). Detachments sharing any tag in this list cannot both be used
+   * in the same army — e.g. Chaos Space Marines' Murdertalon Raiders and
+   * Nightmare Hunt both carry "Nightmare" and are mutually exclusive. 11th
+   * Edition only — always [] for 10e data. Usually empty; most detachments
+   * have no such restriction.
+   */
+  restrictionTags: string[];
   gameSystem: GameSystem;
 };
 

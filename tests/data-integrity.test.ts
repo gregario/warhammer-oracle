@@ -383,6 +383,46 @@ describe("DETACHMENTS_11E / ENHANCEMENTS_11E data integrity", () => {
       expect(det.dispositions, det.name).toEqual([]);
     }
   });
+
+  it("Chaos Space Marines' Murdertalon Raiders and Nightmare Hunt share a mutual-exclusion tag (regression check for the 'cannot be taken with another X detachment' rule)", () => {
+    const raiders = DETACHMENTS_11E.find((d) => d.name === "Murdertalon Raiders" && d.faction === "Chaos Space Marines");
+    const nightmareHunt = DETACHMENTS_11E.find((d) => d.name === "Nightmare Hunt" && d.faction === "Chaos Space Marines");
+    expect(raiders).toBeDefined();
+    expect(nightmareHunt).toBeDefined();
+    expect(raiders!.restrictionTags).toContain("Nightmare");
+    expect(nightmareHunt!.restrictionTags).toContain("Nightmare");
+  });
+
+  it("most 11e detachments have no restriction tag; every tag present is a non-empty string", () => {
+    const withTags = DETACHMENTS_11E.filter((d) => d.restrictionTags.length > 0);
+    expect(withTags.length).toBeGreaterThan(0);
+    expect(withTags.length / DETACHMENTS_11E.length).toBeLessThan(0.3);
+
+    for (const det of withTags) {
+      for (const tag of det.restrictionTags) {
+        expect(tag.trim().length, `${det.faction} / ${det.name}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("most detachments carrying a restriction tag share it with at least one other detachment in the same faction (Doomed is a rare 3-way group; a handful are currently singletons — BSData hasn't published their exclusion partner yet)", () => {
+    const withTags = DETACHMENTS_11E.filter((d) => d.restrictionTags.length > 0);
+    const paired = withTags.filter((det) =>
+      DETACHMENTS_11E.some(
+        (other) =>
+          other.id !== det.id &&
+          other.faction === det.faction &&
+          other.restrictionTags.some((tag) => det.restrictionTags.includes(tag)),
+      ),
+    );
+    expect(paired.length / withTags.length).toBeGreaterThan(0.7);
+  });
+
+  it("10th Edition detachments never have a restriction tag (regression check for a stray BSData categoryLink, e.g. 'Grenades' on 10e's own Gladius Task Force, being wrongly reported as one)", () => {
+    for (const det of DETACHMENTS) {
+      expect(det.restrictionTags, det.name).toEqual([]);
+    }
+  });
 });
 
 describe("SHARED_RULES_11E data integrity", () => {

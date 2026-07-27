@@ -488,6 +488,30 @@ describe("parseDetachments: Detachment Points and Force Disposition (11th Editio
             </rule>
           </rules>
         </selectionEntry>
+        <selectionEntry id="det-3" name="Nightmare Hunt" type="upgrade" hidden="false">
+          <categoryLinks>
+            <categoryLink id="cl3" name="Disruption" hidden="false"/>
+            <categoryLink id="cl4" name="Nightmare" hidden="false"/>
+          </categoryLinks>
+          <costs>
+            <cost name="Detachment Points" typeId="82ae-1066-5107-6ae0" value="2"/>
+          </costs>
+          <rules>
+            <rule id="r3" name="Terror Made Manifest">
+              <description>Test ability text.</description>
+            </rule>
+          </rules>
+        </selectionEntry>
+        <selectionEntry id="det-4" name="10e-style Detachment" type="upgrade" hidden="false">
+          <categoryLinks>
+            <categoryLink id="cl5" name="Grenades" hidden="false"/>
+          </categoryLinks>
+          <rules>
+            <rule id="r4" name="Some Ability">
+              <description>No Detachment Points cost at all — a stray categoryLink like "Grenades" must not be reported as a restriction tag.</description>
+            </rule>
+          </rules>
+        </selectionEntry>
       </selectionEntries>
     </selectionEntryGroup>
   </sharedSelectionEntryGroups>
@@ -511,6 +535,34 @@ describe("parseDetachments: Detachment Points and Force Disposition (11th Editio
     expect(boarding).toBeDefined();
     expect(boarding!.detachmentPoints).toBeNull();
     expect(boarding!.dispositions).toEqual([]);
+  });
+
+  it("extracts a mutual-exclusion restriction tag, filtering it out of dispositions", () => {
+    const parsed = xmlParser.parse(FIXTURE_DETACHMENT_CAT);
+    const detachments = parseDetachments(parsed.catalogue, "Space Marines");
+
+    const nightmareHunt = detachments.find((d) => d.name === "Nightmare Hunt");
+    expect(nightmareHunt).toBeDefined();
+    expect(nightmareHunt!.restrictionTags).toEqual(["Nightmare"]);
+    expect(nightmareHunt!.dispositions).toEqual(["Disruption"]);
+  });
+
+  it("does not report a stray categoryLink as a restriction tag when the entry has no Detachment Points cost at all", () => {
+    const parsed = xmlParser.parse(FIXTURE_DETACHMENT_CAT);
+    const detachments = parseDetachments(parsed.catalogue, "Space Marines");
+
+    const tenEStyle = detachments.find((d) => d.name === "10e-style Detachment");
+    expect(tenEStyle).toBeDefined();
+    expect(tenEStyle!.detachmentPoints).toBeNull();
+    expect(tenEStyle!.restrictionTags).toEqual([]);
+  });
+
+  it("Gladius Task Force (no restriction tag in the fixture) has an empty restrictionTags array", () => {
+    const parsed = xmlParser.parse(FIXTURE_DETACHMENT_CAT);
+    const detachments = parseDetachments(parsed.catalogue, "Space Marines");
+
+    const gladius = detachments.find((d) => d.name === "Gladius Task Force");
+    expect(gladius!.restrictionTags).toEqual([]);
   });
 });
 
