@@ -74,4 +74,27 @@ describe("lookup_detachment", () => {
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("[Mode: 40k 10e]");
   });
+
+  it("shows Detachment Points and Force Disposition for an 11th Edition detachment", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Gladius Task Force" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Detachment Points");
+    expect(text).toContain("Disposition(s)");
+    expect(text).toMatch(/Priority Assets|Take and Hold|Purge the Foe|Reconnaissance|Disruption/);
+    expect(text).toContain("Incursion");
+    expect(text).toContain("Strike Force");
+  });
+
+  it("does not show Detachment Points/Disposition for a 10th Edition detachment (the concept doesn't exist pre-11e)", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Gladius Task Force", game_mode: "40k_10e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).not.toContain("Detachment Points");
+    expect(text).not.toContain("Disposition(s)");
+  });
 });

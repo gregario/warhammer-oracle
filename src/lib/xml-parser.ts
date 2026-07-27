@@ -7,6 +7,7 @@ import type {
   Ability,
   UnitSize,
   Detachment,
+  Disposition,
   Enhancement,
   KillTeamOperative,
   KillTeamOperativeProfile,
@@ -19,6 +20,16 @@ const RANGED_WEAPON_TYPE_ID = "f77d-b953-8fa4-b762";
 const MELEE_WEAPON_TYPE_ID = "8a40-4aaa-c780-9046";
 const ABILITY_TYPE_ID = "9cc3-6d83-4dd3-9b64";
 const POINTS_COST_TYPE_ID = "51b2-306e-1021-d207";
+// 11th Edition only (absent from BSData/wh40k-10e entirely) — a detachment's
+// "Detachment Points" cost, and the categoryLink naming its Force Disposition.
+const DETACHMENT_POINTS_TYPE_ID = "82ae-1066-5107-6ae0";
+const KNOWN_DISPOSITIONS: readonly Disposition[] = [
+  "Take and Hold",
+  "Purge the Foe",
+  "Reconnaissance",
+  "Priority Assets",
+  "Disruption",
+];
 
 // === Profile type IDs from BattleScribe Kill Team (2024) ===
 const KT_OPERATIVE_PROFILE_TYPE_ID = "5156-3fb9-39ce-7bdb";
@@ -789,6 +800,36 @@ export function parseCatalogue(xml: string): Unit[] {
 // === Detachment & Enhancement extraction ===
 
 /**
+ * A detachment's "Detachment Points" cost (1-3), read the same way unit
+ * points are (a <cost> entry keyed by typeId). 11th Edition only — BSData's
+ * 10e catalogues never have this cost type at all, so this returns null for
+ * every 10e detachment.
+ */
+function extractDetachmentPoints(entry: any): number | null {
+  const costs = ensureArray(entry.costs?.cost);
+  const dpCost = costs.find((c: any) => c["@_typeId"] === DETACHMENT_POINTS_TYPE_ID);
+  if (!dpCost) return null;
+  return Number(dpCost["@_value"]);
+}
+
+/**
+ * Which Force Disposition(s) a detachment can select when mustering, read
+ * from its categoryLinks. BSData tags each detachment selectionEntry with
+ * one (occasionally two) of the five disposition names alongside unrelated
+ * decorative/narrative tags (e.g. "3DP Detachment", "Doomed", "Grace",
+ * "Nightmare") that aren't real dispositions — filtered out by only keeping
+ * names that match one of the five known values. 11th Edition only, same as
+ * extractDetachmentPoints above.
+ */
+function extractDetachmentDispositions(entry: any): Disposition[] {
+  const links = ensureArray(entry.categoryLinks?.categoryLink);
+  const names = links
+    .filter((cl: any) => cl["@_hidden"] !== "true")
+    .map((cl: any) => cl["@_name"] as string);
+  return KNOWN_DISPOSITIONS.filter((d) => names.includes(d));
+}
+
+/**
  * Extract the detachment ability from a selectionEntry.
  * Rules may be inline (<rule> elements) or referenced via <infoLink type="rule">.
  * When using infoLinks, we resolve them against a shared rule index.
@@ -964,6 +1005,8 @@ export function parseDetachments(
       name: entry["@_name"],
       faction,
       ability,
+      detachmentPoints: extractDetachmentPoints(entry),
+      dispositions: extractDetachmentDispositions(entry),
       gameSystem: "wh40k-10e" as const,
     });
   }

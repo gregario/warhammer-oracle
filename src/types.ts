@@ -121,6 +121,10 @@ export type Detachment = {
   name: string;
   faction: string;
   ability: { name: string; description: string };
+  /** 1-3, from BSData's "Detachment Points" cost. 11th Edition only — always null for 10e data. */
+  detachmentPoints: number | null;
+  /** Which Force Disposition(s) this detachment can select when mustering. 11th Edition only — always [] for 10e data. */
+  dispositions: Disposition[];
   gameSystem: GameSystem;
 };
 

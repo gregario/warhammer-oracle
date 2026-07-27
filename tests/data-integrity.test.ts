@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { UNITS } from "../src/data/units.js";
 import { UNITS_11E } from "../src/data/units-11e.js";
+import { DETACHMENTS } from "../src/data/detachments.js";
 import { DETACHMENTS_11E } from "../src/data/detachments-11e.js";
 import { ENHANCEMENTS_11E } from "../src/data/enhancements-11e.js";
 import { SHARED_RULES } from "../src/data/rules.js";
@@ -348,6 +349,38 @@ describe("DETACHMENTS_11E / ENHANCEMENTS_11E data integrity", () => {
   it("every enhancement has gameSystem set to wh40k-11e", () => {
     for (const enh of ENHANCEMENTS_11E) {
       expect(enh.gameSystem).toBe("wh40k-11e");
+    }
+  });
+
+  it("most 11e detachments carry a Detachment Points value (1-3) and at least one Force Disposition", () => {
+    const withPoints = DETACHMENTS_11E.filter((d) => d.detachmentPoints !== null);
+    expect(withPoints.length / DETACHMENTS_11E.length).toBeGreaterThan(0.8);
+    for (const det of withPoints) {
+      expect(det.detachmentPoints, det.name).toBeGreaterThanOrEqual(1);
+      expect(det.detachmentPoints, det.name).toBeLessThanOrEqual(3);
+      expect(det.dispositions.length, det.name).toBeGreaterThan(0);
+    }
+
+    // Detachments with no Detachment Points are specifically the Boarding
+    // Actions-only ones (a separate ruleset with no DP/Disposition system),
+    // not a data gap — confirmed for a couple of known examples.
+    const boardingActionsOnly = DETACHMENTS_11E.filter((d) => d.detachmentPoints === null);
+    expect(boardingActionsOnly.some((d) => d.name === "Tyranid Attack")).toBe(true);
+  });
+
+  it("only known Force Disposition values appear on detachments (decorative BSData tags like '3DP Detachment'/'Doomed'/'Grace'/'Nightmare' are filtered out)", () => {
+    const known = new Set(["Take and Hold", "Purge the Foe", "Reconnaissance", "Priority Assets", "Disruption"]);
+    for (const det of DETACHMENTS_11E) {
+      for (const d of det.dispositions) {
+        expect(known.has(d), `${det.name}: ${d}`).toBe(true);
+      }
+    }
+  });
+
+  it("10th Edition detachments never have Detachment Points or dispositions (the concept didn't exist before 11e)", () => {
+    for (const det of DETACHMENTS) {
+      expect(det.detachmentPoints, det.name).toBeNull();
+      expect(det.dispositions, det.name).toEqual([]);
     }
   });
 });

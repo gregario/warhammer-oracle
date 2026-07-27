@@ -18,7 +18,24 @@ function formatDetachment(
   const sections: string[] = [];
 
   sections.push(formatModeStamp(gameSystem));
-  sections.push(`# ${det.name}\n\n**Game:** Warhammer 40,000 | **Faction:** ${det.faction}`);
+
+  const headerParts = [`**Game:** Warhammer 40,000`, `**Faction:** ${det.faction}`];
+  if (det.detachmentPoints !== null) {
+    headerParts.push(`**Detachment Points:** ${det.detachmentPoints}`);
+  }
+  if (det.dispositions.length > 0) {
+    headerParts.push(`**Disposition(s):** ${det.dispositions.join(", ")}`);
+  }
+  sections.push(`# ${det.name}\n\n${headerParts.join(" | ")}`);
+
+  if (det.detachmentPoints !== null) {
+    sections.push(
+      `> An army's *total* Detachment Points across every detachment it uses is capped by battle size — ` +
+        `2 DP at Incursion, 3 DP at Strike Force. A single detachment whose own DP value (shown above) exceeds ` +
+        `that cap is still legal on its own (e.g. a 3 DP detachment at Incursion) — the cap only stops you from ` +
+        `combining multiple detachments whose DP adds up past the limit.`,
+    );
+  }
 
   sections.push(`### Detachment Ability: ${det.ability.name}\n\n${det.ability.description}`);
 
@@ -47,7 +64,8 @@ function formatDetachment(
 export function registerLookupDetachment(server: McpServer): void {
   server.tool(
     "lookup_detachment",
-    "Look up a Warhammer 40,000 detachment by name. Returns the detachment ability, available enhancements, and associated stratagems.",
+    "Look up a Warhammer 40,000 detachment by name. Returns the detachment ability, available enhancements, " +
+      "associated stratagems, and (11th Edition only) its Detachment Points cost and eligible Force Disposition(s).",
     {
       name: z.string().describe("Name or partial name of the detachment to look up"),
       faction: z

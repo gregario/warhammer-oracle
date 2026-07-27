@@ -5,6 +5,7 @@ import {
   parseGameSystem,
   parseKillTeamGameSystem,
   parseEntryNode,
+  parseDetachments,
   normalizeJsonNode,
   extractFaction,
   extractUnitSize,
@@ -459,6 +460,59 @@ const FIXTURE_11E_CAT_JSON = {
     ],
   },
 };
+
+describe("parseDetachments: Detachment Points and Force Disposition (11th Edition only)", () => {
+  const FIXTURE_DETACHMENT_CAT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<catalogue id="test-cat" name="Imperium - Space Marines" xmlns="http://www.battlescribe.net/schema/catalogueSchema">
+  <sharedSelectionEntryGroups>
+    <selectionEntryGroup id="det-group" name="Detachment">
+      <selectionEntries>
+        <selectionEntry id="det-1" name="Gladius Task Force" type="upgrade" hidden="false">
+          <categoryLinks>
+            <categoryLink id="cl1" name="Priority Assets" hidden="false"/>
+            <categoryLink id="cl2" name="3DP Detachment" hidden="false"/>
+          </categoryLinks>
+          <costs>
+            <cost name="Detachment Points" typeId="82ae-1066-5107-6ae0" value="3"/>
+          </costs>
+          <rules>
+            <rule id="r1" name="Oath of Moment">
+              <description>Test ability text.</description>
+            </rule>
+          </rules>
+        </selectionEntry>
+        <selectionEntry id="det-2" name="Boarding Actions Detachment" type="upgrade" hidden="false">
+          <rules>
+            <rule id="r2" name="Boarding Ability">
+              <description>No Detachment Points or Disposition data for this one.</description>
+            </rule>
+          </rules>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntryGroup>
+  </sharedSelectionEntryGroups>
+</catalogue>`;
+
+  it("extracts Detachment Points and Force Disposition, filtering out decorative categoryLinks like '3DP Detachment'", () => {
+    const parsed = xmlParser.parse(FIXTURE_DETACHMENT_CAT);
+    const detachments = parseDetachments(parsed.catalogue, "Space Marines");
+
+    const gladius = detachments.find((d) => d.name === "Gladius Task Force");
+    expect(gladius).toBeDefined();
+    expect(gladius!.detachmentPoints).toBe(3);
+    expect(gladius!.dispositions).toEqual(["Priority Assets"]);
+  });
+
+  it("returns null Detachment Points and no dispositions when the catalogue entry has neither (e.g. Boarding Actions-only detachments)", () => {
+    const parsed = xmlParser.parse(FIXTURE_DETACHMENT_CAT);
+    const detachments = parseDetachments(parsed.catalogue, "Space Marines");
+
+    const boarding = detachments.find((d) => d.name === "Boarding Actions Detachment");
+    expect(boarding).toBeDefined();
+    expect(boarding!.detachmentPoints).toBeNull();
+    expect(boarding!.dispositions).toEqual([]);
+  });
+});
 
 describe("extractKeywords: named-character units with keywords on a nested model child", () => {
   it("merges keywords from a single nested model child into a sparse top-level unit wrapper", () => {
