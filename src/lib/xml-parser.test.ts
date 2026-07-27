@@ -460,6 +460,89 @@ const FIXTURE_11E_CAT_JSON = {
   },
 };
 
+describe("extractKeywords: named-character units with keywords on a nested model child", () => {
+  it("merges keywords from a single nested model child into a sparse top-level unit wrapper", () => {
+    const xml = `<selectionEntry id="u1" name="Traitor Enforcer" type="unit" hidden="false">
+      <categoryLinks>
+        <categoryLink id="cl1" name="Character" hidden="false"/>
+        <categoryLink id="cl2" name="Damned" hidden="false"/>
+      </categoryLinks>
+      <selectionEntries>
+        <selectionEntry id="m1" name="Traitor Enforcer" type="model" hidden="false">
+          <categoryLinks>
+            <categoryLink id="cl3" name="Faction: Heretic Astartes" hidden="false"/>
+            <categoryLink id="cl4" name="Infantry" hidden="false"/>
+            <categoryLink id="cl5" name="Character" hidden="false"/>
+          </categoryLinks>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const unit = parseEntryNode(entry, "Chaos Space Marines");
+
+    expect(unit!.keywords).toContain("Character");
+    expect(unit!.keywords).toContain("Damned");
+    expect(unit!.keywords).toContain("Heretic Astartes");
+    expect(unit!.keywords).toContain("Infantry");
+    // "Character" appears on both levels — must not be duplicated
+    expect(unit!.keywords.filter((k) => k === "Character")).toHaveLength(1);
+  });
+
+  it("merges keywords from multiple nested model children (e.g. Fabius Bile + his Surgeon Acolyte companion model)", () => {
+    const xml = `<selectionEntry id="u1" name="Fabius Bile" type="unit" hidden="false">
+      <categoryLinks>
+        <categoryLink id="cl1" name="Epic Hero" hidden="false"/>
+      </categoryLinks>
+      <selectionEntries>
+        <selectionEntry id="m1" name="Fabius Bile" type="model" hidden="false">
+          <categoryLinks>
+            <categoryLink id="cl2" name="Infantry" hidden="false"/>
+            <categoryLink id="cl3" name="Chaos" hidden="false"/>
+          </categoryLinks>
+        </selectionEntry>
+        <selectionEntry id="m2" name="Surgeon Acolyte" type="model" hidden="false">
+          <categoryLinks>
+            <categoryLink id="cl4" name="Infantry" hidden="false"/>
+            <categoryLink id="cl5" name="Chaos Undivided" hidden="false"/>
+          </categoryLinks>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const unit = parseEntryNode(entry, "Chaos Space Marines");
+
+    expect(unit!.keywords).toEqual(
+      expect.arrayContaining(["Epic Hero", "Infantry", "Chaos", "Chaos Undivided"]),
+    );
+    expect(unit!.keywords.filter((k) => k === "Infantry")).toHaveLength(1);
+  });
+
+  it("does not merge keywords from squad weapon-option children nested inside selectionEntryGroups (a different shape, already fully keyword-tagged on the unit itself)", () => {
+    const xml = `<selectionEntry id="u1" name="Chosen" type="unit" hidden="false">
+      <categoryLinks>
+        <categoryLink id="cl1" name="Infantry" hidden="false"/>
+        <categoryLink id="cl2" name="Faction: Heretic Astartes" hidden="false"/>
+      </categoryLinks>
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g1" name="4-9 Chosen">
+          <selectionEntries>
+            <selectionEntry id="m1" name="Chosen w/ boltgun" type="model" hidden="false">
+              <categoryLinks>
+                <categoryLink id="cl3" name="ShouldNotLeak" hidden="false"/>
+              </categoryLinks>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const unit = parseEntryNode(entry, "Chaos Space Marines");
+
+    expect(unit!.keywords).toEqual(["Infantry", "Heretic Astartes"]);
+    expect(unit!.keywords).not.toContain("ShouldNotLeak");
+  });
+});
+
 describe("normalizeJsonNode (BSData 11e JSON)", () => {
   it("normalizes a JSON catalogue node into the same shape parseEntryNode expects from XML", () => {
     const normalized = normalizeJsonNode(FIXTURE_11E_CAT_JSON);

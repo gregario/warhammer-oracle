@@ -339,11 +339,46 @@ function extractPoints(entry: any): number | null {
  * strips only the "Faction: " label prefix and keeps the value as a normal
  * keyword, rather than dropping the category link altogether.
  */
-function extractKeywords(entry: any): string[] {
+function extractOwnKeywords(entry: any): string[] {
   const links = ensureArray(entry.categoryLinks?.categoryLink);
-  return links
+  const names = links
     .filter((cl: any) => cl["@_hidden"] !== "true")
     .map((cl: any) => (cl["@_name"] as string).replace(/^Faction:\s*/, ""));
+  // A few BSData entries (e.g. Grey Knights' Rhino) list the same categoryLink
+  // name more than once — dedupe defensively rather than surface a repeated tag.
+  return [...new Set(names)];
+}
+
+/**
+ * A handful of named-character units (Fabius Bile, Traitor Enforcer, ...)
+ * are structured in BSData as a thin top-level "unit" wrapper around one or
+ * more nested "model" children (Fabius Bile actually has two — himself plus
+ * an attached "Surgeon Acolyte" companion model) that carry the actual
+ * keyword set — the wrapper's own categoryLinks are just a bare tag or two
+ * (e.g. "Epic Hero" alone), while the real Infantry/Character/Chaos/faction
+ * tags live on those direct children. Detected structurally (the entry has
+ * direct "model"-type children under its own `selectionEntries`) rather
+ * than by name: a normal multi-model squad's weapon-option variants are
+ * nested inside `selectionEntryGroups` instead (Chosen, Nurglings, Wolf
+ * Scouts, ...), a different shape this deliberately doesn't match, and
+ * those squads already carry their full keyword set directly on the
+ * top-level entry regardless. This only ever adds keywords, never removes
+ * any, so it's a no-op for entries that don't have this exact shape.
+ */
+function extractKeywords(entry: any): string[] {
+  const own = extractOwnKeywords(entry);
+  if (entry["@_type"] !== "unit") return own;
+
+  const modelChildren = ensureArray(entry.selectionEntries?.selectionEntry).filter(
+    (c: any) => c["@_hidden"] !== "true" && c["@_type"] === "model",
+  );
+  const merged = [...own];
+  for (const child of modelChildren) {
+    for (const kw of extractKeywords(child)) {
+      if (!merged.includes(kw)) merged.push(kw);
+    }
+  }
+  return merged;
 }
 
 /**

@@ -277,6 +277,59 @@ describe("UNITS_11E data integrity", () => {
     const necronsWithKeyword = necrons.filter((u) => u.keywords.includes("Necrons"));
     expect(necronsWithKeyword.length / necrons.length).toBeGreaterThan(0.5);
   });
+
+  it("no unit has a suspiciously sparse keyword list (regression check for two bugs: phantom per-model wargear-loadout entries, and named-character units whose real keywords lived on an unmerged nested model child)", () => {
+    const sparse = UNITS_11E.filter(
+      (u) => u.keywords.length <= 2 && !u.keywords.some((k) => k.toLowerCase() === u.name.toLowerCase()),
+    );
+    expect(sparse.map((u) => `${u.faction} / ${u.name}`)).toEqual([]);
+  });
+
+  it("per-model wargear-loadout variants (Wolf Scout w/ plasma gun, Burna Boy, Sister Novitiate, ...) don't appear as their own phantom top-level units — only the real squad they belong to does", () => {
+    const phantomNames = [
+      "Wolf Scout", "Wolf Scout w/ plasma gun", "Wolf Scout w/ haywire mine",
+      "Wolf Scout w/ runic stave and Thunderclap", "Wolf Scout Pack Leader",
+      "Burna Boy", "Spanner", "Loota", "Runtherd", "Squighog Boy", "Nob on Smasha Squig",
+      "Cyber-mastiff", "Jakhal", "Geminae Superia",
+    ];
+    for (const name of phantomNames) {
+      expect(UNITS_11E.some((u) => u.name === name), name).toBe(false);
+    }
+
+    // The real squads they belong to must still be present and fully tagged.
+    for (const name of ["Wolf Scouts", "Burna Boyz"]) {
+      const units = UNITS_11E.filter((u) => u.name === name);
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) expect(u.keywords.length, `${name} (${u.faction})`).toBeGreaterThan(2);
+    }
+  });
+
+  it("named-character units built as a thin wrapper around one or more nested model children (Fabius Bile, Traitor Enforcer) inherit the real keyword set from those children", () => {
+    for (const name of ["Fabius Bile", "Traitor Enforcer"]) {
+      const units = UNITS_11E.filter((u) => u.name === name);
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) {
+        expect(u.keywords.length, `${name} (${u.faction})`).toBeGreaterThan(2);
+        expect(u.keywords, `${name} (${u.faction})`).toContain("Chaos");
+      }
+    }
+  });
+
+  it("no unit has an implausibly large keyword list (regression check against a merge-logic runaway)", () => {
+    for (const unit of UNITS_11E) {
+      expect(unit.keywords.length, `${unit.faction} / ${unit.name}`).toBeLessThan(20);
+    }
+  });
+
+  it("no unit has duplicate keywords", () => {
+    const dupes: string[] = [];
+    for (const unit of UNITS_11E) {
+      if (new Set(unit.keywords).size !== unit.keywords.length) {
+        dupes.push(`${unit.faction} / ${unit.name}`);
+      }
+    }
+    expect(dupes).toEqual([]);
+  });
 });
 
 describe("DETACHMENTS_11E / ENHANCEMENTS_11E data integrity", () => {

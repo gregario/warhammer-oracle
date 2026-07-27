@@ -262,7 +262,38 @@ async function fetchCatalogueRepo(
     // 2a: Direct inline units from this catalogue (selectionEntries + own sharedSelectionEntries)
     const directEntries = ensureArray(cat.raw.selectionEntries?.selectionEntry);
     const ownSharedEntries = ensureArray(cat.raw.sharedSelectionEntries?.selectionEntry);
-    for (const entry of [...directEntries, ...ownSharedEntries]) {
+    const topLevelCandidates = [...directEntries, ...ownSharedEntries];
+
+    // Some top-level sharedSelectionEntries are pure reusable components —
+    // one per-model wargear loadout variant of a real squad (e.g. "Wolf
+    // Scout w/ plasma gun", one of several such entries only ever selected
+    // via the real "Wolf Scouts" unit's own "12 Models"/"6 Models" wargear
+    // groups) — not independently fieldable datasheets. Sweeping every
+    // top-level entry unconditionally (as this loop used to) emitted these
+    // as phantom duplicate "units" with only their own sparse/empty
+    // categoryLinks, since the real squad-wide keywords live on the
+    // consuming unit, not the component (confirmed against raw BSData:
+    // Wolf Scout family, Burna Boy, Sister Novitiate, Deathwatch Veteran,
+    // Cyber-mastiff, etc. — 20+ phantom units across ~8 factions). Detect
+    // these by collecting every entryLink target referenced from within
+    // any top-level entry's own descendant tree, and excluding a candidate
+    // from this sweep if something else consumes it that way — unless
+    // it's ALSO independently reachable via the catalogue's own top-level
+    // entryLinks (the real "roster access" mechanism used in step 2b),
+    // which is how genuinely standalone units correctly stay included
+    // (e.g. Fabius Bile: a thin "unit" wrapper reachable at the top level,
+    // whose own categoryLinks are sparse but whose single nested "model"
+    // child isn't referenced by anything else at all).
+    const nestedlyConsumedIds = collectNestedEntryLinkTargets(topLevelCandidates);
+    const rootEntryLinkTargetIds = new Set(
+      ensureArray(cat.raw.entryLinks?.entryLink)
+        .map((link: any) => link["@_targetId"])
+        .filter(Boolean),
+    );
+
+    for (const entry of topLevelCandidates) {
+      const id = entry["@_id"];
+      if (id && nestedlyConsumedIds.has(id) && !rootEntryLinkTargetIds.has(id)) continue;
       const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex);
       if (unit) catUnits.push(unit);
     }
@@ -458,6 +489,46 @@ function indexSharedEntries(node: any, index: Map<string, any>): void {
       }
     }
   }
+}
+
+/**
+ * Collect every entryLink targetId referenced anywhere within a set of
+ * entries' own descendant selectionEntries/selectionEntryGroups, at any
+ * depth. Used by step 2a to tell apart a genuinely standalone top-level
+ * entry from one that's actually a reusable component — e.g. a squad's
+ * per-model wargear loadout variant — only ever reached via another
+ * top-level entry's own nested wargear-option groups. Deliberately does
+ * NOT include the catalogue's own root-level entryLinks (a different,
+ * legitimate "roster access" mechanism, see step 2b) — those are read
+ * separately by the caller.
+ */
+function collectNestedEntryLinkTargets(entries: any[]): Set<string> {
+  const targets = new Set<string>();
+
+  function collectLinks(node: any): void {
+    for (const link of ensureArray(node.entryLinks?.entryLink)) {
+      const targetId = link["@_targetId"];
+      if (targetId) targets.add(targetId);
+    }
+  }
+
+  function walk(entry: any): void {
+    collectLinks(entry);
+
+    for (const sub of ensureArray(entry.selectionEntries?.selectionEntry)) {
+      walk(sub);
+    }
+
+    for (const group of ensureArray(entry.selectionEntryGroups?.selectionEntryGroup)) {
+      collectLinks(group);
+      for (const sub of ensureArray(group.selectionEntries?.selectionEntry)) {
+        walk(sub);
+      }
+    }
+  }
+
+  entries.forEach(walk);
+  return targets;
 }
 
 /** Parse an entry node, resolving its internal entryLinks against the global shared index.
