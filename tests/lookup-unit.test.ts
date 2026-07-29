@@ -21,9 +21,12 @@ describe("lookup_unit tool", () => {
   });
 
   it("returns a datasheet for a known unit", async () => {
+    // Faction pinned: Abaddon is also a legal ally import into Chaos Daemons/Chaos
+    // Knights armies (like Imperial Knights' Canis Rex under 17 Imperium factions),
+    // so an unfiltered lookup can resolve to any of his faction copies.
     const result = await client.callTool({
       name: "lookup_unit",
-      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_10e" },
+      arguments: { unit_name: "Abaddon the Despoiler", faction: "Chaos Space Marines", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("[Mode: 40k 10e]");

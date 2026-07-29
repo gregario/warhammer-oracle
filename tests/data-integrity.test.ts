@@ -117,9 +117,10 @@ describe("UNITS data integrity", () => {
     }
   });
 
-  it("fewer than 30 units have zero weapons (regression check — was 148 before the deep-nesting fix, is now ~15 legitimately unarmed units: terrain, transports, mines)", () => {
+  it("fewer than 30 *distinct* units have zero weapons (regression check — was 148 before the deep-nesting fix, is now ~22 legitimately unarmed units: terrain, transports, mines; checked by distinct name rather than raw count since fixing the unitOnly entryLink bug made legitimately-unarmed shared fortifications/terrain, e.g. Searchlight, correctly multiply across every faction that can include them as allies)", () => {
     const zeroWeapons = UNITS.filter((u) => u.rangedWeapons.length === 0 && u.meleeWeapons.length === 0);
-    expect(zeroWeapons.length).toBeLessThan(30);
+    const distinctNames = new Set(zeroWeapons.map((u) => u.name));
+    expect(distinctNames.size).toBeLessThan(30);
   });
 
   it("no unit has a runaway profile count from over-following a shared entryLink pool (regression check for the ~397-ability blowup bug)", () => {
@@ -240,9 +241,10 @@ describe("UNITS_11E data integrity", () => {
     }
   });
 
-  it("fewer than 30 units have zero weapons (regression check — was 533 mid-fix before the entryLink denylist, is now ~15 legitimately unarmed units: terrain, transports, mines)", () => {
+  it("fewer than 30 *distinct* units have zero weapons (regression check — was 533 mid-fix before the entryLink denylist, is now ~22 legitimately unarmed units: terrain, transports, mines; checked by distinct name rather than raw count — see the UNITS (10e) version of this test for why)", () => {
     const zeroWeapons = UNITS_11E.filter((u) => u.rangedWeapons.length === 0 && u.meleeWeapons.length === 0);
-    expect(zeroWeapons.length).toBeLessThan(30);
+    const distinctNames = new Set(zeroWeapons.map((u) => u.name));
+    expect(distinctNames.size).toBeLessThan(30);
   });
 
   it("no unit has a runaway profile count from over-following a shared entryLink pool (regression check for the ~397-ability blowup bug)", () => {
@@ -261,10 +263,15 @@ describe("UNITS_11E data integrity", () => {
     }
   });
 
-  it("most Chaos Space Marines units carry Heretic Astartes (Daemon-ally exceptions like Nurglings/Bloodletters legitimately don't)", () => {
+  it("most Chaos Space Marines units carry Heretic Astartes (legitimate exceptions: Daemon-ally units like Nurglings/Bloodletters, Chaos Knights ally imports, and un-retagged Horus Heresy [Legends] vehicles)", () => {
     const csm = UNITS_11E.filter((u) => u.faction === "Chaos Space Marines");
     const withKeyword = csm.filter((u) => u.keywords.includes("Heretic Astartes"));
-    expect(withKeyword.length / csm.length).toBeGreaterThan(0.7);
+    // Lower than it might look at a glance: fixing the unitOnly entryLink bug also
+    // correctly surfaced every ally-importable Chaos Knight and Chaos Daemon named
+    // character/unit under the Chaos Space Marines faction too (the exact same
+    // intentional pattern already established for Imperial Knights' Canis Rex
+    // appearing under 17 Imperium factions), which naturally dilutes this ratio.
+    expect(withKeyword.length / csm.length).toBeGreaterThan(0.5);
   });
 
   it("units generally carry their catalogue's army-wide keyword, not just faction-string metadata (Space Marines / Adeptus Astartes, Necrons / Necrons)", () => {
@@ -280,8 +287,14 @@ describe("UNITS_11E data integrity", () => {
   });
 
   it("no unit has a suspiciously sparse keyword list (regression check for two bugs: phantom per-model wargear-loadout entries, and named-character units whose real keywords lived on an unmerged nested model child)", () => {
+    // "Searchlight" is a real, minimal shared-fortification unit (10pts, one ability,
+    // tagged just "Allies: Unaligned Forces") — legitimately sparse, not a data gap.
+    const knownLegitimatelySparse = new Set(["Searchlight"]);
     const sparse = UNITS_11E.filter(
-      (u) => u.keywords.length <= 2 && !u.keywords.some((k) => k.toLowerCase() === u.name.toLowerCase()),
+      (u) =>
+        u.keywords.length <= 2 &&
+        !u.keywords.some((k) => k.toLowerCase() === u.name.toLowerCase()) &&
+        !knownLegitimatelySparse.has(u.name),
     );
     expect(sparse.map((u) => `${u.faction} / ${u.name}`)).toEqual([]);
   });
@@ -330,6 +343,39 @@ describe("UNITS_11E data integrity", () => {
       }
     }
     expect(dupes).toEqual([]);
+  });
+
+  it("Chaos Daemons' The Changeling (and similar named single-model characters) are present with complete, correct data (regression check for the unitOnly entryLink bug that dropped every standalone type=\"model\" character reached via a library's own root-level entryLinks)", () => {
+    for (const name of ["The Changeling", "Skulltaker", "Skullmaster", "The Blue Scribes"]) {
+      const units = UNITS_11E.filter((u) => u.name === name && u.faction === "Chaos Daemons");
+      expect(units.length, name).toBeGreaterThan(0);
+      for (const u of units) {
+        expect(u.profiles.length, `${name} profile`).toBeGreaterThan(0);
+        expect(u.rangedWeapons.length + u.meleeWeapons.length, `${name} weapons`).toBeGreaterThan(0);
+        expect(u.unitSize, `${name} unitSize`).toEqual({ min: 1, max: 1 });
+      }
+    }
+  });
+
+  it("no unit picked up the universal 'Mighty Champions' Crusade-only ability bloat (regression check: a 'Crusade' wrapper group's nested entryLink, e.g. to 'Mighty Champions', isn't caught by the link-name-only denylist since the group's name carries the 'crusade' signal, not the link's own name)", () => {
+    const championBloatNames = [
+      "Front-line Champions", "Inspirational Champions", "Logistical Champions",
+      "Nemesis Champions", "Restorative Champions", "Strategic Champions", "Subtle Champions",
+    ];
+    for (const unit of UNITS_11E) {
+      for (const ability of unit.abilities) {
+        expect(championBloatNames, `${unit.faction} / ${unit.name}`).not.toContain(ability.name);
+      }
+    }
+  });
+
+  it("no single-model named character has an inflated unitSize from counting its own top-level weapon options as model slots (regression check: The Changeling's two weapons, each a mandatory min=1/max=1 child, previously computed to a 3-model unit)", () => {
+    for (const name of ["The Changeling", "Skulltaker", "Skullmaster", "The Blue Scribes"]) {
+      const units = UNITS_11E.filter((u) => u.name === name && u.faction === "Chaos Daemons");
+      for (const u of units) {
+        expect(u.unitSize, `${name}`).toEqual({ min: 1, max: 1 });
+      }
+    }
   });
 });
 

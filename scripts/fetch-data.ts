@@ -298,8 +298,8 @@ async function fetchCatalogueRepo(
       if (unit) catUnits.push(unit);
     }
 
-    // 2b: Resolve top-level entryLinks → look up in global shared index
-    // Use unitOnly=true to skip model-type entries (wargear options) from shared pools
+    // 2b: Resolve top-level entryLinks → look up in global shared index.
+    // Accepts both type="unit" and type="model" targets — see parseEntryWithLinks.
     const topEntryLinks = ensureArray(cat.raw.entryLinks?.entryLink);
     for (const link of topEntryLinks) {
       const targetId = link["@_targetId"];
@@ -309,7 +309,7 @@ async function fetchCatalogueRepo(
       const target = globalSharedIndex.get(targetId);
       if (!target) continue;
 
-      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, true);
+      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex);
       if (unit) {
         // Use the link's id to avoid collisions with other factions using same shared entry
         const linkId = link["@_id"] || unit.id;
@@ -333,7 +333,9 @@ async function fetchCatalogueRepo(
         if (unit) catUnits.push(unit);
       }
 
-      // Resolve the linked catalogue's entryLinks (unitOnly for shared entries)
+      // Resolve the linked catalogue's own root-level entryLinks — this is how a
+      // library's named single-model characters (e.g. The Changeling, Skulltaker)
+      // reach the output; see parseEntryWithLinks.
       const linkedEntryLinks = ensureArray(linkedCat.raw.entryLinks?.entryLink);
       for (const link of linkedEntryLinks) {
         const targetId = link["@_targetId"];
@@ -343,7 +345,7 @@ async function fetchCatalogueRepo(
         const target = globalSharedIndex.get(targetId);
         if (!target) continue;
 
-        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, true);
+        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex);
         if (unit) {
           const linkId = link["@_id"] || unit.id;
           catUnits.push({ ...unit, id: linkId });
@@ -531,24 +533,36 @@ function collectNestedEntryLinkTargets(entries: any[]): Set<string> {
   return targets;
 }
 
-/** Parse an entry node, resolving its internal entryLinks against the global shared index.
- *  unitOnly: if true, only accept type="unit" (skip type="model"). Used for entryLink-resolved entries
- *  to avoid pulling in individual weapon loadout options marked as "model". */
+/**
+ * Parse an entry node, resolving its internal entryLinks against the global
+ * shared index. Accepts both type="unit" and type="model" — a standalone
+ * named character with no wrapping "unit" container (e.g. Chaos Daemons'
+ * The Changeling, Skulltaker, Skullmaster) is type="model" at the top
+ * level, exactly like a squad's per-model wargear-loadout option is.
+ * Previously this took a `unitOnly` flag that rejected every type="model"
+ * entry reached via a root-level entryLink, added to keep wargear-loadout
+ * components out — but that's the wrong signal to gate on: a root-level
+ * entryLink (this catalogue's own, or a linked library's own — see 2b/2c
+ * below) is BSData's actual "this is independently fieldable" mechanism,
+ * and confirmed reliable by the phantom-unit investigation this replaced
+ * (every real wargear-loadout component found was reached only via a
+ * *nested* entryLink buried inside another unit's own option groups, never
+ * a root-level one — see collectNestedEntryLinkTargets/2a above). Gating
+ * on type="unit" here just meant every root-linked type="model" character
+ * was silently dropped instead, which is what caused The Changeling (and
+ * every other Chaos Daemons named character built this way) to be missing
+ * entirely from both editions' bundled data.
+ */
 function parseEntryWithLinks(
   entry: any,
   faction: string,
   globalIndex: Map<string, any>,
   ruleIndex: Map<string, any>,
-  unitOnly = false
 ): Unit | null {
   const type = entry["@_type"];
   const hidden = entry["@_hidden"] === "true";
   if (hidden) return null;
-  if (unitOnly) {
-    if (type !== "unit") return null;
-  } else {
-    if (type !== "unit" && type !== "model") return null;
-  }
+  if (type !== "unit" && type !== "model") return null;
 
   // Collect all profiles including from entryLinks (resolved against global index)
   const profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex);
@@ -632,9 +646,20 @@ function collectAllProfilesWithGlobalLinks(
   );
 
   const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
-  const groupProfiles = groups.flatMap((group: any) =>
-    collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, visited),
-  );
+  const groupProfiles = groups.flatMap((group: any) => {
+    // A group's own name can be the universal-pool signal even when the
+    // entryLink nested inside it isn't (see UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN):
+    // BattleScribe's standard "Crusade" wrapper group holds a single entryLink to
+    // "Mighty Champions" — a shared pool of generic Crusade-only narrative
+    // abilities used by nearly every named character across every faction, not
+    // specific to the unit that references it (confirmed: Chaos Daemons' The
+    // Changeling's abilities ballooned with duplicated "Front-line/Inspirational/
+    // Logistical/Nemesis/Restorative/Strategic/Subtle Champions" text this way —
+    // the link itself is named "Mighty Champions", which doesn't match the
+    // pattern; only the enclosing group's name, "Crusade", does).
+    if (UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.test(group["@_name"] ?? "")) return [];
+    return collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, visited);
+  });
 
   const all = [...direct, ...ruleAbilities, ...linkedProfiles, ...subEntryProfiles, ...groupProfiles];
   if (all.length > MAX_PROFILES_PER_UNIT) {

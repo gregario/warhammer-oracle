@@ -299,6 +299,68 @@ describe("extractUnitSize", () => {
     const entry = xmlParser.parse(xml).selectionEntry[0];
     expect(extractUnitSize(entry)).toEqual({ min: 2, max: 2 });
   });
+
+  it("does not count a standalone character's own top-level weapon options as model slots (regression check: Chaos Daemons' The Changeling has 'The Trickster's Staff' and 'Infernal Flames' as direct mandatory min=1/max=1 children, and was wrongly computed as a 3-model unit)", () => {
+    const xml = `<selectionEntry id="u1" name="The Changeling" type="model" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="w1" name="The Trickster's Staff" type="upgrade" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+          <profiles>
+            <profile id="p1" name="The Trickster's Staff" typeId="8a40-4aaa-c780-9046">
+              <characteristics>
+                <characteristic name="Range">Melee</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+        <selectionEntry id="w2" name="Infernal Flames" type="upgrade" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+          <profiles>
+            <profile id="p2" name="Infernal Flames" typeId="f77d-b953-8fa4-b762">
+              <characteristics>
+                <characteristic name="Range">12"</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 1, max: 1 });
+  });
+
+  it("still counts a real model slot that happens to carry its own inline weapon profile alongside a Unit profile", () => {
+    const xml = `<selectionEntry id="u1" name="Squad" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="c1" name="Champion" type="model" hidden="false">
+          <constraints>
+            <constraint type="min" value="1" field="selections" scope="parent"/>
+            <constraint type="max" value="1" field="selections" scope="parent"/>
+          </constraints>
+          <profiles>
+            <profile id="p1" name="Champion" typeId="c547-1836-d8a-ff4f">
+              <characteristics>
+                <characteristic name="M">6"</characteristic>
+              </characteristics>
+            </profile>
+            <profile id="p2" name="Boltgun" typeId="f77d-b953-8fa4-b762">
+              <characteristics>
+                <characteristic name="Range">24"</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 1, max: 1 });
+  });
 });
 
 describe("rule-type infoLink resolution into abilities", () => {

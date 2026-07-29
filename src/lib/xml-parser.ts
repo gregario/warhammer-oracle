@@ -416,6 +416,27 @@ function extractCountConstraint(node: any): UnitSize | null {
 }
 
 /**
+ * Whether a child is itself a wargear item (carries a Ranged/Melee weapon
+ * profile directly, with no "Unit" profile of its own) rather than a model
+ * slot — e.g. a standalone character's own top-level weapon options (Chaos
+ * Daemons' The Changeling has "The Trickster's Staff" and "Infernal Flames"
+ * as direct children, each a mandatory min=1/max=1 "selections" choice, the
+ * exact same constraint shape a real model slot like "Aspiring Champion"
+ * uses). Without this check, extractUnitSize counted each such weapon as
+ * its own model, computing The Changeling — a single-model character — as
+ * a 3-model unit. A real model slot carries its own "Unit" characteristics
+ * profile (M/T/Sv/W/Ld/OC); a pure weapon item never does.
+ */
+function isPureWeaponChild(node: any): boolean {
+  const profiles = ensureArray(node.profiles?.profile);
+  const hasWeapon = profiles.some(
+    (p: any) => p["@_typeId"] === RANGED_WEAPON_TYPE_ID || p["@_typeId"] === MELEE_WEAPON_TYPE_ID,
+  );
+  const hasUnitProfile = profiles.some((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID);
+  return hasWeapon && !hasUnitProfile;
+}
+
+/**
  * Whether a child selectionEntry/selectionEntryGroup has any content of its
  * own (inline sub-entries, sub-groups, or profiles) rather than being a
  * pure entryLinks-only reference to shared content elsewhere — e.g. a
@@ -470,12 +491,20 @@ function hasOwnInlineContent(node: any): boolean {
  * confidently assert a unit has 0 models, since every real unit has at
  * least 1, even where the true composition (which may be larger) isn't
  * recoverable here.
+ *
+ * `children` excludes pure-weapon items (see isPureWeaponChild) before any
+ * of the above runs — a standalone character's own top-level weapon
+ * options (e.g. Chaos Daemons' The Changeling, whose direct children are
+ * just "The Trickster's Staff" and "Infernal Flames") use the identical
+ * mandatory min=1/max=1 "selections" constraint shape a real model slot
+ * does, and without this exclusion each one was wrongly counted as its own
+ * model — a single-model character computed to a 3-model unit.
  */
 function extractUnitSize(entry: any): UnitSize {
   const children = [
     ...ensureArray(entry.selectionEntries?.selectionEntry),
     ...ensureArray(entry.selectionEntryGroups?.selectionEntryGroup),
-  ].filter((c: any) => c["@_hidden"] !== "true");
+  ].filter((c: any) => c["@_hidden"] !== "true" && !isPureWeaponChild(c));
 
   if (children.length === 0) return { min: 1, max: 1 };
 
