@@ -64,7 +64,7 @@ jobs:
 
       - name: Upgrade npm for OIDC trusted publishing
         if: steps.diff.outputs.changed == 'true'
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Bump version, sync manifests, publish, tag, release
         if: steps.diff.outputs.changed == 'true'
