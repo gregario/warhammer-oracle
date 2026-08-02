@@ -10,6 +10,7 @@
   <a href="https://github.com/gregario/warhammer-oracle/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT Licence"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js 18+"></a>
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-compatible-purple.svg" alt="MCP Compatible"></a>
+  <a href="https://github.com/sponsors/gregario"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa.svg" alt="Sponsor"></a>
   <a href="https://glama.ai/mcp/servers/gregario/warhammer-oracle"><img src="https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/score.svg" alt="warhammer-oracle MCP server"></a>
 </p>
 
@@ -17,7 +18,9 @@
 
 Ask your AI assistant about datasheets, stratagems, detachments, enhancements, keywords, phase sequences, wound math, and more. Covers Warhammer 40,000 (10th and 11th Edition), Combat Patrol, and Kill Team.
 
-**Editions:** 40K unit/detachment/enhancement lookups default to **11th Edition**. Pass `game_mode: "40k_10e"` to any of those tools for 10th Edition data instead — 10th Edition support isn't going away. Turn sequences/phases, core keywords, and Core Stratagems are hand-curated from the 11th Edition Core Rules. Detachment-specific stratagems are hand-curated per faction, layered the same way the tabletop rules are layered: an 11th Edition Faction Pack detachment overrides the base Codex where the pack details it in full, and the unrevised Codex baseline applies everywhere else. Space Marines, Chaos Space Marines, Chaos Daemons, Chaos Knights, Death Guard, Emperor's Children, Thousand Sons, World Eaters, T'au Empire, Black Templars, Adepta Sororitas, Genestealer Cults, Aeldari, Necrons, Space Wolves, Drukhari, Dark Angels, Imperial Knights, Adeptus Mechanicus, Leagues of Votann, Adeptus Custodes, Grey Knights, Deathwatch, Blood Angels, Orks, Agents of the Imperium, Tyranids, and Astra Militarum are done this way; other factions haven't been updated yet (the `lookup_stratagem`/`search_stratagems` tools note this per-stratagem).
+[![warhammer-oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
+
+**Editions:** 40K unit/detachment/enhancement lookups default to **11th Edition**. Pass `game_mode: "40k_10e"` to any tool for 10th Edition data instead — 10th Edition support isn't going away. Turn sequences/phases, core keywords, and Core Stratagems are hand-curated from the 11th Edition Core Rules. Detachment-specific stratagems are hand-curated per faction, layered the same way the tabletop rules are layered: an 11th Edition Faction Pack detachment overrides the base Codex where the pack details it in full, and the unrevised Codex baseline applies everywhere else.
 
 ## Installation
 
@@ -91,14 +94,15 @@ Look up a game phase by name. Returns step-by-step instructions and tips.
 
 ### `search_units`
 
-Search units by name, faction, or keywords. Returns a compact list (max 10 results) with faction, points, and keywords.
+Search units by name, faction, keywords, or ability text. Returns a compact list (max 10 results) with faction, points, and keywords.
 
 ```
 "Find all Necron units under 100 points"
 "Search for units with the Fly keyword"
+"Show me units with Deep Strike"
 ```
 
-**Parameters:** `query` (required), `faction` (optional), `max_points` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`, `combat_patrol`, `kill_team`)
+**Parameters:** `query` (required), `faction` (optional), `ability` (optional), `max_points` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`, `combat_patrol`, `kill_team`)
 
 ### `compare_units`
 
@@ -154,7 +158,7 @@ Look up a detachment by name. Returns the detachment ability, available enhancem
 "What does the Warhost detachment do for Aeldari?"
 ```
 
-**Parameters:** `name` (required), `faction` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`) — associated stratagems are only shown in `40k_10e` mode, since stratagem data hasn't been updated for 11th Edition yet
+**Parameters:** `name` (required), `faction` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`)
 
 ### `lookup_enhancement`
 
@@ -191,7 +195,7 @@ Calculate expected damage output for an attack profile against a target. Handles
 
 ### `determine_primary_mission`
 
-Determine each player's Primary Mission from their Force Dispositions (11th Edition Matched Play). Each player's mission is looked up from their *opponent's* Force Disposition — in a non-mirror matchup, the two players get different missions. Returns mission names only, not full scoring/objective text (see [Data](#data) for why).
+Determine each player's Primary Mission from their Force Dispositions (11th Edition Matched Play). Each player's mission is looked up from their *opponent's* Force Disposition — in a non-mirror matchup, the two players get different missions. Returns mission names only, not full scoring/objective text.
 
 ```
 "I picked Take and Hold, my opponent picked Purge the Foe — what are our missions?"
@@ -200,24 +204,35 @@ Determine each player's Primary Mission from their Force Dispositions (11th Edit
 
 **Parameters:** `your_disposition`, `opponent_disposition` (both required, one of: `Take and Hold`, `Purge the Foe`, `Reconnaissance`, `Priority Assets`, `Disruption`)
 
+### `lookup_crusade`
+
+Look up Crusade content (narrative play). Returns Crusade rules, relics, battle traits, and upgrades.
+
+```
+"What Crusade relics can Space Marines take?"
+"Show me the Crusade battle traits"
+```
+
+**Parameters:** `query` (required), `faction` (optional)
+
 ## Data
 
-All data is embedded at build time — no network calls at runtime.
+All data is embedded at build time — no network calls at runtime. Data is synced daily from BSData via GitHub Actions.
 
 | Category | Count | Source |
 |---|---|---|
-| 40K unit datasheets (10th Edition) | 2,666 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e), including per-unit model-count range (`unitSize`), derived from each datasheet's BattleScribe composition constraints |
-| 40K unit datasheets (11th Edition, default) | 2,695 | [BSData/wh40k-11e](https://github.com/BSData/wh40k-11e), including per-unit model-count range (`unitSize`) as above |
+| 40K unit datasheets (11th Edition, default) | 2,695 | [BSData/wh40k-11e](https://github.com/BSData/wh40k-11e) |
+| 40K unit datasheets (10th Edition) | 2,666 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e) |
 | Kill Team operatives | 519 | [BSData/wh40k-killteam](https://github.com/BSData/wh40k-killteam) |
-| Detachments (10th / 11th Edition) | 208 / 259 | BSData (auto-extracted) |
-| Enhancements (10th / 11th Edition) | 827 / 895 | BSData (auto-extracted) |
-| Stratagems | 1,316 | Hand-curated — 10 Core Stratagems (11th Edition Core Rules) plus 1,306 detachment-specific, layered per the tabletop rules: an 11th Edition Faction Pack detachment overrides the Codex where it's detailed in full, the 10th Edition Codex baseline (via secondary sources — 40k.app and Wahapedia, whichever is more current) applies everywhere else. Space Marines (15/15 detachments), Chaos Space Marines (17/17), Chaos Daemons (9/9), Chaos Knights (8), Death Guard (9), Emperor's Children (10), Thousand Sons (9), World Eaters (8), T'au Empire (7), Black Templars (6 chapter-exclusive detachments layered on top of the shared Space Marines pool), Adepta Sororitas (8/8), Genestealer Cults (9/11 — 2 skipped, Boarding Actions-only), Aeldari (15/15 — Asuryani, Harlequins, Aeldari Corsairs, and Ynnari; Drukhari excluded, tracked as its own faction despite sharing BSData's "Aeldari" tag), Necrons (12/12), Space Wolves (7 chapter-exclusive detachments layered on top of the shared Space Marines pool), Drukhari (9/9, including 3 Drukhari/Harlequins-alliance detachments), Dark Angels (8 chapter-exclusive detachments layered on top of the shared Space Marines pool), Imperial Knights (8/8), Adeptus Mechanicus (10/10), Leagues of Votann (10/10), Adeptus Custodes (9/9, including the Sisters of Silence-flavoured Silent Hunters and Null Maiden Vigil detachments), Grey Knights (9/9), Deathwatch (1 chapter-exclusive detachment layered on top of the shared Space Marines pool), Blood Angels (8 chapter-exclusive detachments layered on top of the shared Space Marines pool), Orks (12/12 — 2 skipped, Boarding Actions-only), Agents of the Imperium (5/5), Tyranids (10/13 — 3 skipped, Boarding Actions-only), Astra Militarum (11/13 — 2 skipped, Boarding Actions-only) |
+| Detachments (11th / 10th Edition) | 259 / 208 | BSData (auto-extracted) |
+| Enhancements (11th / 10th Edition) | 895 / 827 | BSData (auto-extracted) |
+| Stratagems | 1,316 | Hand-curated (Core Rules + detachment-specific per faction) |
 | Kill Team ploys | 14 | Hand-curated (universal + popular factions) |
-| Shared rules (10th / 11th Edition) | 33 / 35 | BSData |
+| Shared rules (11th / 10th Edition) | 35 / 33 | BSData |
 | Shared rules (Kill Team) | 22 | BSData |
 | Curated keywords | 25 | Hand-written, plain English, 11th Edition Core Rules |
-| Game mode sequences | 3 | Hand-curated — 40K and Combat Patrol reflect the 11th Edition Core Rules; Kill Team is edition-agnostic |
-| Force Disposition mission matchups | 15 (5 Force Dispositions, full grid) | Hand-curated — 7 pairings verified directly from GW's free Warhammer Event Companion PDF, the remaining 8 from game-datamissions.com (fan-maintained), cross-validated cell-by-cell against the 7 verified pairings before being trusted. Mission *names* only — full scoring/objective text isn't freely published by GW and wasn't found reproduced in full by any fan site either, so it isn't included. Which Force Disposition(s) a given detachment can pick is also not yet tracked (conveyed via icon, not text, in the source PDFs) |
+| Game mode sequences | 3 | Hand-curated (40K, Combat Patrol, Kill Team) |
+| Force Disposition mission matchups | 15 | Hand-curated (5 dispositions, full grid) |
 
 ### Game modes
 
@@ -226,7 +241,7 @@ All data is embedded at build time — no network calls at runtime.
 - **Combat Patrol** (`combat_patrol`) — smaller, starter-friendly format
 - **Kill Team** (`kill_team`) — squad-level skirmish game
 
-10th Edition support isn't going away when a newer edition is added — every `game_mode` value, once added, keeps working. See [docs/design/11e-support.md](docs/design/11e-support.md) for the reasoning.
+10th Edition support isn't going away when a newer edition is added — every `game_mode` value, once added, keeps working.
 
 ## Development
 

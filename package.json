@@ -1,11 +1,11 @@
 {
-  "name": "warhammer-oracle-11e",
+  "name": "warhammer-oracle",
   "version": "0.2.39",
-  "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server — fork of gregario/warhammer-oracle with 11th Edition support",
-  "mcpName": "io.github.jtarbox/warhammer-oracle-11e",
+  "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server — 10th and 11th Edition, Combat Patrol, Kill Team",
+  "mcpName": "io.github.gregario/warhammer-oracle",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jtarbox/warhammer-oracle-11e.git"
+    "url": "https://github.com/gregario/warhammer-oracle.git"
   },
   "type": "module",
   "bin": {
