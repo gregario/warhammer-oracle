@@ -17,7 +17,10 @@ import {
   parseKillTeamCatalogue,
   parseDetachments,
   parseEnhancements,
+  parseGenericCrusadeHonours,
+  parseFactionCrusadeHonours,
   buildRuleIndex,
+  buildProfileIndex,
   xmlParser,
   ensureArray,
   parseEntryNode,
@@ -25,7 +28,7 @@ import {
   normalizeJsonNode,
   ruleLinksToAbilityProfiles,
 } from "../src/lib/xml-parser.js";
-import type { Unit, Detachment, Enhancement, KillTeamOperative } from "../src/types.js";
+import type { Unit, Detachment, Enhancement, CrusadeHonour, KillTeamOperative } from "../src/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -123,14 +126,20 @@ async function fetchCatalogueRepo(
   catFiles: TreeEntry[],
   parseNode: (raw: string) => any,
   gameSystem: "wh40k-10e" | "wh40k-11e",
+  // Crusade Honours (Battle Traits/Relics/Battle Scars/Boons) are only
+  // extracted for wh40k-11e — see CrusadeHonour's doc comment in types.ts
+  // for why this mirrors the DetachmentPoints/Disposition 11e-only scoping.
+  extractCrusade = false,
 ): Promise<{
   units: Unit[];
   detachments: Detachment[];
   enhancements: Enhancement[];
+  crusadeHonours: CrusadeHonour[];
   rules: { name: string; description: string }[];
 }> {
   // ── Phase 0: Parse game system file(s) for rules ──
   const allRules: { name: string; description: string }[] = [];
+  const allCrusadeHonours: CrusadeHonour[] = [];
   // Also build a global shared entry index from the game system file
   const globalSharedIndex = new Map<string, any>();
   // Global rule index (by id), for resolving infoLinks in detachment and unit
@@ -138,6 +147,13 @@ async function fetchCatalogueRepo(
   // — where universal core abilities like Deep Strike, Infiltrators, and Scouts
   // actually live — then extended per-catalogue below.
   const globalRuleIndex = new Map<string, any>();
+  // Global profile index (by id) — the profile-based counterpart to
+  // globalRuleIndex, for resolving <infoLink type="profile"> (see
+  // ruleLinksToAbilityProfiles in xml-parser.ts). Confirmed via BSData/
+  // wh40k-10e: Adeptus Custodes' Custodian Guard references its wargear
+  // abilities ("Praesidium Shield", "Vexilla") this way, not via a rule
+  // infoLink — without this, those abilities were silently dropped entirely.
+  const globalProfileIndex = new Map<string, any>();
 
   for (const gst of gameSystemFiles) {
     console.log(`  Fetching ${gst.path}...`);
@@ -166,6 +182,16 @@ async function fetchCatalogueRepo(
 
     // Index shared entries from game system file too
     indexSharedEntries(gs, globalSharedIndex);
+
+    for (const [id, profile] of buildProfileIndex(gs)) {
+      globalProfileIndex.set(id, profile);
+    }
+
+    if (extractCrusade) {
+      const genericHonours = parseGenericCrusadeHonours(gs);
+      allCrusadeHonours.push(...genericHonours);
+      console.log(`    → ${genericHonours.length} generic/campaign Crusade Honours`);
+    }
   }
 
   // ── Phase 1: Fetch and parse ALL catalogues (including libraries) ──
@@ -207,8 +233,15 @@ async function fetchCatalogueRepo(
         globalRuleIndex.set(id, rule);
       }
     }
+    const catProfiles = buildProfileIndex(cat.raw);
+    for (const [id, profile] of catProfiles) {
+      if (!globalProfileIndex.has(id)) {
+        globalProfileIndex.set(id, profile);
+      }
+    }
   }
   console.log(`  Global rule index: ${globalRuleIndex.size} rules`);
+  console.log(`  Global profile index: ${globalProfileIndex.size} profiles`);
 
   // Build a lookup from catalogue ID → ParsedCatalogue for catalogueLink resolution
   const catalogueById = new Map<string, ParsedCatalogue>();
@@ -237,6 +270,10 @@ async function fetchCatalogueRepo(
     const catEnhancements = parseEnhancements(cat.raw, faction, globalSharedIndex);
     allEnhancements.push(...catEnhancements);
 
+    if (extractCrusade) {
+      allCrusadeHonours.push(...parseFactionCrusadeHonours(cat.raw, faction));
+    }
+
     // Also check linked library catalogues for detachments/enhancements —
     // but only the catalogue's OWN dedicated library (see libraryBelongsToFaction),
     // not every ally-unit library it links to for roster-building purposes.
@@ -253,6 +290,10 @@ async function fetchCatalogueRepo(
 
       const linkedEnhancements = parseEnhancements(linkedCat.raw, faction, globalSharedIndex);
       allEnhancements.push(...linkedEnhancements);
+
+      if (extractCrusade) {
+        allCrusadeHonours.push(...parseFactionCrusadeHonours(linkedCat.raw, faction));
+      }
     }
 
     if (catDetachments.length > 0 || catEnhancements.length > 0) {
@@ -294,7 +335,7 @@ async function fetchCatalogueRepo(
     for (const entry of topLevelCandidates) {
       const id = entry["@_id"];
       if (id && nestedlyConsumedIds.has(id) && !rootEntryLinkTargetIds.has(id)) continue;
-      const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex);
+      const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
       if (unit) catUnits.push(unit);
     }
 
@@ -309,7 +350,7 @@ async function fetchCatalogueRepo(
       const target = globalSharedIndex.get(targetId);
       if (!target) continue;
 
-      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex);
+      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
       if (unit) {
         // Use the link's id to avoid collisions with other factions using same shared entry
         const linkId = link["@_id"] || unit.id;
@@ -329,7 +370,7 @@ async function fetchCatalogueRepo(
       // Import the linked catalogue's own direct selectionEntries
       const linkedDirect = ensureArray(linkedCat.raw.selectionEntries?.selectionEntry);
       for (const entry of linkedDirect) {
-        const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex);
+        const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
         if (unit) catUnits.push(unit);
       }
 
@@ -345,7 +386,7 @@ async function fetchCatalogueRepo(
         const target = globalSharedIndex.get(targetId);
         if (!target) continue;
 
-        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex);
+        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
         if (unit) {
           const linkId = link["@_id"] || unit.id;
           catUnits.push({ ...unit, id: linkId });
@@ -401,7 +442,17 @@ async function fetchCatalogueRepo(
     }
   }
 
-  console.log(`\n${gameSystem} Total: ${finalUnits.length} units, ${finalDetachments.length} detachments, ${finalEnhancements.length} enhancements, ${allRules.length} shared rules`);
+  const finalCrusadeHonours: CrusadeHonour[] = [];
+  const crusadeHonourSeen = new Set<string>();
+  for (const honour of allCrusadeHonours) {
+    const key = `${honour.faction ?? ""}::${honour.campaign ?? ""}::${honour.id}`;
+    if (!crusadeHonourSeen.has(key)) {
+      crusadeHonourSeen.add(key);
+      finalCrusadeHonours.push({ ...honour, gameSystem });
+    }
+  }
+
+  console.log(`\n${gameSystem} Total: ${finalUnits.length} units, ${finalDetachments.length} detachments, ${finalEnhancements.length} enhancements, ${finalCrusadeHonours.length} Crusade Honours, ${allRules.length} shared rules`);
 
   // Log per-faction breakdown
   const factionCounts = new Map<string, number>();
@@ -431,7 +482,17 @@ async function fetchCatalogueRepo(
     console.log(`  ${faction}: ${dets} detachments, ${enhs} enhancements`);
   }
 
-  return { units: finalUnits, detachments: finalDetachments, enhancements: finalEnhancements, rules: allRules };
+  if (extractCrusade) {
+    console.log(`\nCrusade Honours: ${finalCrusadeHonours.length} total`);
+  }
+
+  return {
+    units: finalUnits,
+    detachments: finalDetachments,
+    enhancements: finalEnhancements,
+    crusadeHonours: finalCrusadeHonours,
+    rules: allRules,
+  };
 }
 
 export async function fetch40k() {
@@ -466,6 +527,7 @@ export async function fetch11e() {
     catFiles,
     (raw) => normalizeJsonNode(JSON.parse(raw)),
     "wh40k-11e",
+    true, // extractCrusade
   );
 }
 
@@ -558,6 +620,7 @@ function parseEntryWithLinks(
   faction: string,
   globalIndex: Map<string, any>,
   ruleIndex: Map<string, any>,
+  profileIndex: Map<string, any>,
 ): Unit | null {
   const type = entry["@_type"];
   const hidden = entry["@_hidden"] === "true";
@@ -565,7 +628,7 @@ function parseEntryWithLinks(
   if (type !== "unit" && type !== "model") return null;
 
   // Collect all profiles including from entryLinks (resolved against global index)
-  const profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex);
+  const profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex, profileIndex);
 
   return parseEntryNode(entry, faction, profiles);
 }
@@ -595,6 +658,20 @@ function parseEntryWithLinks(
  * and Cultist Mob picked up mutation-flavoured abilities (Mutant Form,
  * Massive Fangs, Scorpion Tail, Daemonic Flesh, Warp Stalker, Dark Blessing)
  * that only apply after a Crusade boon roll, not on the base datasheet.
+ *
+ * Deliberately does NOT exclude Crucible/made-to-order characters' own
+ * "Weapons"/"Abilities"/"Specialisms"/"Chapter" entryLinks (tried, reverted —
+ * see docs/design/11e-support.md's 2026-08-01 follow-up). These looked like
+ * the same kind of bloat at first glance (one unit's ability count went from
+ * ~6 to 40, weapons to 29+20), but user-provided official rules pages for
+ * "Crucible Champions — Adeptus Astartes" confirmed this is GW's actual,
+ * intentional design: a Crucible character is built by picking up to one
+ * Specialism, exactly one Ability, and its Weapons (up to 1 ranged + 2
+ * pistols + 1-2 melee) from real menus — structurally identical to how an
+ * ordinary squad's wargear options are already listed in full here (e.g.
+ * Intercessor Squad's 7 ranged options), just a bigger menu. Excluding them
+ * was net-negative (a Crucible character showing 0 weapons is less accurate
+ * than showing every real weapon option), not a fix.
  */
 const UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN =
   /enhancement|warlord|crusade|weapon modifications?|battle trait|battle scar|requisition|boons?/i;
@@ -623,10 +700,11 @@ function collectAllProfilesWithGlobalLinks(
   entry: any,
   globalIndex: Map<string, any>,
   ruleIndex: Map<string, any>,
+  profileIndex: Map<string, any>,
   visited: Set<string> = new Set(),
 ): any[] {
   const direct = ensureArray(entry.profiles?.profile);
-  const ruleAbilities = ruleLinksToAbilityProfiles(entry, ruleIndex);
+  const ruleAbilities = ruleLinksToAbilityProfiles(entry, ruleIndex, profileIndex);
 
   const entryLinks = ensureArray(entry.entryLinks?.entryLink);
   const linkedProfiles = entryLinks.flatMap((link: any) => {
@@ -637,12 +715,12 @@ function collectAllProfilesWithGlobalLinks(
     const target = globalIndex.get(targetId);
     if (!target) return [];
     visited.add(targetId);
-    return collectAllProfilesWithGlobalLinks(target, globalIndex, ruleIndex, visited);
+    return collectAllProfilesWithGlobalLinks(target, globalIndex, ruleIndex, profileIndex, visited);
   });
 
   const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
   const subEntryProfiles = subEntries.flatMap((sub: any) =>
-    collectAllProfilesWithGlobalLinks(sub, globalIndex, ruleIndex, visited),
+    collectAllProfilesWithGlobalLinks(sub, globalIndex, ruleIndex, profileIndex, visited),
   );
 
   const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
@@ -658,7 +736,7 @@ function collectAllProfilesWithGlobalLinks(
     // the link itself is named "Mighty Champions", which doesn't match the
     // pattern; only the enclosing group's name, "Crusade", does).
     if (UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.test(group["@_name"] ?? "")) return [];
-    return collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, visited);
+    return collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, profileIndex, visited);
   });
 
   const all = [...direct, ...ruleAbilities, ...linkedProfiles, ...subEntryProfiles, ...groupProfiles];
@@ -733,6 +811,7 @@ async function main() {
     units: units11e,
     detachments: detachments11e,
     enhancements: enhancements11e,
+    crusadeHonours: crusadeHonours11e,
     rules: rules11e,
   } = await fetch11e();
   const { operatives, rules: rulesKT } = await fetchKillTeam();
@@ -848,6 +927,22 @@ async function main() {
 
   writeFileSync(enhancements11ePath, enhancements11eContent, "utf-8");
   console.log(`Wrote ${enhancements11ePath} (${enhancements11e.length} enhancements)`);
+
+  // ── Write src/data/crusade-11e.ts ──
+  const crusade11ePath = join(ROOT, "src", "data", "crusade-11e.ts");
+  const crusade11eContent = [
+    "// Auto-generated by scripts/fetch-data.ts — do not edit manually",
+    `// Generated: ${new Date().toISOString()}`,
+    `// Source: https://github.com/${REPO_40K_11E}`,
+    "",
+    'import type { CrusadeHonour } from "../types.js";',
+    "",
+    `export const CRUSADE_HONOURS_11E: CrusadeHonour[] = ${JSON.stringify(crusadeHonours11e, null, 2)};`,
+    "",
+  ].join("\n");
+
+  writeFileSync(crusade11ePath, crusade11eContent, "utf-8");
+  console.log(`Wrote ${crusade11ePath} (${crusadeHonours11e.length} Crusade Honours)`);
 
   // ── Write src/data/rules-11e.ts ──
   const rules11ePath = join(ROOT, "src", "data", "rules-11e.ts");

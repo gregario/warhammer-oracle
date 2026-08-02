@@ -4,6 +4,7 @@ import { UNITS_11E } from "../src/data/units-11e.js";
 import { DETACHMENTS } from "../src/data/detachments.js";
 import { DETACHMENTS_11E } from "../src/data/detachments-11e.js";
 import { ENHANCEMENTS_11E } from "../src/data/enhancements-11e.js";
+import { CRUSADE_HONOURS_11E } from "../src/data/crusade-11e.js";
 import { SHARED_RULES } from "../src/data/rules.js";
 import { SHARED_RULES_11E } from "../src/data/rules-11e.js";
 import { STRATAGEMS } from "../src/data/stratagems.js";
@@ -126,6 +127,18 @@ describe("UNITS data integrity", () => {
   it("no unit has a runaway profile count from over-following a shared entryLink pool (regression check for the ~397-ability blowup bug)", () => {
     for (const unit of UNITS) {
       expect(unit.abilities.length, `${unit.faction} / ${unit.name}`).toBeLessThan(100);
+    }
+  });
+
+  it("Crucible/made-to-order characters keep their full Specialism/Ability/Weapon customization menu (NOT a bug — confirmed against official 'Crucible Champions' rules pages: a real Crucible character is built by picking up to one Specialism, exactly one Ability, and its weapons from real menus, so a large option count is correct and expected, structurally identical to how an ordinary squad's wargear options are already listed in full)", () => {
+    const champions = UNITS.filter((u) => u.name === "Champion of the Chapter [Crucible]");
+    expect(champions.length).toBeGreaterThan(0);
+    for (const u of champions) {
+      // Its own always-true content should still be present...
+      expect(u.abilities.map((a) => a.name), u.faction).toContain("Exemplar Warrior");
+      // ...alongside the full Specialism/Ability/Weapon menus (dozens of options).
+      expect(u.abilities.length, `${u.faction} abilities`).toBeGreaterThan(15);
+      expect(u.rangedWeapons.length + u.meleeWeapons.length, `${u.faction} weapons`).toBeGreaterThan(15);
     }
   });
 });
@@ -609,5 +622,93 @@ describe("STRATAGEMS data integrity", () => {
         expect(strat.detachment).not.toBeNull();
       }
     }
+  });
+});
+
+describe("Crusade Honours (11th Edition only)", () => {
+  it("has a substantial number of entries", () => {
+    expect(CRUSADE_HONOURS_11E.length).toBeGreaterThan(500);
+  });
+
+  it("every entry has a non-empty name and description", () => {
+    for (const h of CRUSADE_HONOURS_11E) {
+      expect(h.name.length).toBeGreaterThan(0);
+      expect(h.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("scope and its matching field are consistent: generic has neither faction nor campaign", () => {
+    for (const h of CRUSADE_HONOURS_11E) {
+      if (h.scope === "generic") {
+        expect(h.faction).toBeNull();
+        expect(h.campaign).toBeNull();
+      }
+    }
+  });
+
+  it("scope and its matching field are consistent: faction has faction set, campaign null", () => {
+    for (const h of CRUSADE_HONOURS_11E) {
+      if (h.scope === "faction") {
+        expect(h.faction).not.toBeNull();
+        expect(h.campaign).toBeNull();
+      }
+    }
+  });
+
+  it("scope and its matching field are consistent: campaign has campaign set, faction null", () => {
+    for (const h of CRUSADE_HONOURS_11E) {
+      if (h.scope === "campaign") {
+        expect(h.campaign).not.toBeNull();
+        expect(h.faction).toBeNull();
+      }
+    }
+  });
+
+  it("relicTier is only set on relic-category entries, and only to a known tier", () => {
+    const knownTiers = new Set(["Antiquity", "Legendary", "Artificer"]);
+    for (const h of CRUSADE_HONOURS_11E) {
+      if (h.relicTier !== null) {
+        expect(h.category).toBe("relic");
+        expect(knownTiers.has(h.relicTier)).toBe(true);
+      }
+    }
+  });
+
+  it("every category value is one of the known Crusade content types", () => {
+    const knownCategories = new Set(["battleTrait", "relic", "battleScar", "boon"]);
+    for (const h of CRUSADE_HONOURS_11E) {
+      expect(knownCategories.has(h.category)).toBe(true);
+    }
+  });
+
+  it("includes at least one entry per campaign supplement", () => {
+    const campaigns = new Set(CRUSADE_HONOURS_11E.filter((h) => h.scope === "campaign").map((h) => h.campaign));
+    expect(campaigns.has("Tyrannic War")).toBe(true);
+    expect(campaigns.has("Pariah Nexus")).toBe(true);
+    expect(campaigns.has("Armageddon")).toBe(true);
+  });
+
+  it("includes Chaos Space Marines' faction-specific Battle Traits, Relics, and Boons", () => {
+    const csm = CRUSADE_HONOURS_11E.filter((h) => h.faction === "Chaos Space Marines");
+    expect(csm.some((h) => h.name === "Living Hull" && h.category === "battleTrait")).toBe(true);
+    expect(csm.some((h) => h.category === "relic")).toBe(true);
+    expect(csm.some((h) => h.category === "boon")).toBe(true);
+  });
+
+  it("includes the universal Battle Scars table", () => {
+    const scars = CRUSADE_HONOURS_11E.filter((h) => h.category === "battleScar");
+    expect(scars.length).toBeGreaterThanOrEqual(6);
+    expect(scars.every((h) => h.scope === "generic")).toBe(true);
+  });
+
+  it("has no duplicate ids within the same faction/campaign scope", () => {
+    const seen = new Set<string>();
+    const dupes: string[] = [];
+    for (const h of CRUSADE_HONOURS_11E) {
+      const key = `${h.faction ?? ""}::${h.campaign ?? ""}::${h.id}`;
+      if (seen.has(key)) dupes.push(`${h.faction ?? h.campaign ?? "generic"} / ${h.name}`);
+      seen.add(key);
+    }
+    expect(dupes).toEqual([]);
   });
 });

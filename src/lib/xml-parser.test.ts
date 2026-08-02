@@ -6,10 +6,13 @@ import {
   parseKillTeamGameSystem,
   parseEntryNode,
   parseDetachments,
+  parseGenericCrusadeHonours,
+  parseFactionCrusadeHonours,
   normalizeJsonNode,
   extractFaction,
   extractUnitSize,
   collectAllProfiles,
+  buildProfileIndex,
   xmlParser,
 } from "./xml-parser.js";
 
@@ -798,6 +801,424 @@ describe("parseKillTeamCatalogue", () => {
   it("extracts faction from 2024 catalogue name", () => {
     const operatives = parseKillTeamCatalogue(FIXTURE_KT_CAT);
     expect(operatives[0].faction).toBe("Space Marine");
+  });
+});
+
+describe("parseGenericCrusadeHonours (11th Edition only)", () => {
+  const FIXTURE_GAMESYSTEM = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<gameSystem id="sys1" name="Warhammer 40,000" xmlns="http://www.battlescribe.net/schema/gameSystemSchema">
+  <sharedSelectionEntryGroups>
+    <selectionEntryGroup id="g-scars" name="Battle Scars">
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g-scars-main" name="Main Rules Battle Scars">
+          <selectionEntries>
+            <selectionEntry id="scar-1" name="Battle-weary" type="upgrade" hidden="false">
+              <profiles>
+                <profile id="p1" name="Battle-weary" typeId="9cc3-6d83-4dd3-9b64">
+                  <characteristics>
+                    <characteristic name="Description">Subtract 1 from Battle-shock tests.</characteristic>
+                  </characteristics>
+                </profile>
+              </profiles>
+            </selectionEntry>
+            <selectionEntry id="scar-2" name="Hidden Scar" type="upgrade" hidden="true">
+              <profiles>
+                <profile id="p2" name="Hidden Scar" typeId="9cc3-6d83-4dd3-9b64">
+                  <characteristics>
+                    <characteristic name="Description">Should not appear.</characteristic>
+                  </characteristics>
+                </profile>
+              </profiles>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-traits" name="Battle Traits">
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g-traits-tw" name="Tyrannic War Battle Traits">
+          <selectionEntries>
+            <selectionEntry id="trait-1" name="Deadly Combatant" type="upgrade" hidden="false">
+              <profiles>
+                <profile id="p3" name="Deadly Combatant" typeId="9cc3-6d83-4dd3-9b64">
+                  <characteristics>
+                    <characteristic name="Description">Re-roll Wound rolls of 1.</characteristic>
+                  </characteristics>
+                </profile>
+              </profiles>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-traits-arma" name="Armageddon Battle Traits">
+      <selectionEntries>
+        <selectionEntry id="trait-2" name="Ashwalker" type="upgrade" hidden="false">
+          <profiles>
+            <profile id="p4" name="Ashwalker" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Ignore Hazardous terrain effects.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-relics" name="Crusade Relics">
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g-relics-tw" name="Tyrannic War Crusade Relics">
+          <selectionEntryGroups>
+            <selectionEntryGroup id="g-relics-tw-ant" name="Antiquity Relics">
+              <selectionEntries>
+                <selectionEntry id="relic-1" name="The Genestealer's Claw" type="upgrade" hidden="false">
+                  <profiles>
+                    <profile id="p5" name="The Genestealer's Claw" typeId="9cc3-6d83-4dd3-9b64">
+                      <characteristics>
+                        <characteristic name="Description">This weapon has the [LETHAL HITS] ability.</characteristic>
+                      </characteristics>
+                    </profile>
+                  </profiles>
+                </selectionEntry>
+              </selectionEntries>
+            </selectionEntryGroup>
+          </selectionEntryGroups>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntryGroup>
+  </sharedSelectionEntryGroups>
+</gameSystem>`;
+
+  it("extracts generic Battle Scars, filtering out hidden entries", () => {
+    const parsed = xmlParser.parse(FIXTURE_GAMESYSTEM);
+    const honours = parseGenericCrusadeHonours(parsed.gameSystem);
+
+    const scar = honours.find((h) => h.name === "Battle-weary");
+    expect(scar).toBeDefined();
+    expect(scar!.category).toBe("battleScar");
+    expect(scar!.scope).toBe("generic");
+    expect(scar!.faction).toBeNull();
+    expect(scar!.campaign).toBeNull();
+    expect(honours.find((h) => h.name === "Hidden Scar")).toBeUndefined();
+  });
+
+  it("extracts campaign Battle Traits nested under the generic wrapper, tagging the campaign name", () => {
+    const parsed = xmlParser.parse(FIXTURE_GAMESYSTEM);
+    const honours = parseGenericCrusadeHonours(parsed.gameSystem);
+
+    const trait = honours.find((h) => h.name === "Deadly Combatant");
+    expect(trait).toBeDefined();
+    expect(trait!.category).toBe("battleTrait");
+    expect(trait!.scope).toBe("campaign");
+    expect(trait!.campaign).toBe("Tyrannic War");
+    expect(trait!.faction).toBeNull();
+  });
+
+  it("also finds a campaign Battle Traits group reachable as its own top-level group (not nested)", () => {
+    const parsed = xmlParser.parse(FIXTURE_GAMESYSTEM);
+    const honours = parseGenericCrusadeHonours(parsed.gameSystem);
+
+    const trait = honours.find((h) => h.name === "Ashwalker");
+    expect(trait).toBeDefined();
+    expect(trait!.scope).toBe("campaign");
+    expect(trait!.campaign).toBe("Armageddon");
+  });
+
+  it("extracts campaign Crusade Relics with their tier", () => {
+    const parsed = xmlParser.parse(FIXTURE_GAMESYSTEM);
+    const honours = parseGenericCrusadeHonours(parsed.gameSystem);
+
+    const relic = honours.find((h) => h.name === "The Genestealer's Claw");
+    expect(relic).toBeDefined();
+    expect(relic!.category).toBe("relic");
+    expect(relic!.scope).toBe("campaign");
+    expect(relic!.campaign).toBe("Tyrannic War");
+    expect(relic!.relicTier).toBe("Antiquity");
+  });
+
+  it("does not report the bare wrapper groups themselves as campaign entries", () => {
+    const parsed = xmlParser.parse(FIXTURE_GAMESYSTEM);
+    const honours = parseGenericCrusadeHonours(parsed.gameSystem);
+
+    expect(honours.find((h) => h.name === "Battle Traits")).toBeUndefined();
+    expect(honours.find((h) => h.name === "Crusade Relics")).toBeUndefined();
+    expect(honours.find((h) => h.name === "Battle Scars")).toBeUndefined();
+  });
+});
+
+describe("parseFactionCrusadeHonours (11th Edition only)", () => {
+  const FIXTURE_FACTION_CAT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<catalogue id="test-cat" name="Chaos - Chaos Space Marines" xmlns="http://www.battlescribe.net/schema/catalogueSchema">
+  <sharedSelectionEntryGroups>
+    <selectionEntryGroup id="g-codex-traits" name="Codex Battle Traits">
+      <comment>Crusade content</comment>
+      <selectionEntries>
+        <selectionEntry id="trait-1" name="Living Hull" type="upgrade" hidden="false">
+          <profiles>
+            <profile id="p1" name="Living Hull" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Add 2 to this model's Wounds characteristic.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-codex-relics" name="Codex Crusade Relics">
+      <comment>Crusade content</comment>
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g-relics-legendary" name="Legendary Relics">
+          <selectionEntries>
+            <selectionEntry id="relic-1" name="The Murder Blade" type="upgrade" hidden="false">
+              <profiles>
+                <profile id="p2" name="The Murder Blade" typeId="9cc3-6d83-4dd3-9b64">
+                  <characteristics>
+                    <characteristic name="Description">This weapon has the [PRECISION] ability.</characteristic>
+                  </characteristics>
+                </profile>
+              </profiles>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-boons" name="Chaos Boons">
+      <comment>Crusade content</comment>
+      <selectionEntries>
+        <selectionEntry id="boon-1" name="Warp Stalker" type="upgrade" hidden="false">
+          <profiles>
+            <profile id="p3" name="Warp Stalker" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Re-roll Advance and Charge rolls.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-warband-champion" name="Warband Champion">
+      <comment>Crusade content</comment>
+      <selectionEntries>
+        <selectionEntry id="wc-1" name="Some Champion Marker" type="upgrade" hidden="false">
+          <profiles>
+            <profile id="p4" name="Some Champion Marker" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Should not appear — comment matches but name matches no known category.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntryGroup>
+    <selectionEntryGroup id="g-enhancements" name="Enhancements">
+      <selectionEntries>
+        <selectionEntry id="enh-1" name="Mark of Chaos Ascendant" type="upgrade" hidden="false">
+          <profiles>
+            <profile id="p5" name="Mark of Chaos Ascendant" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Should not appear — not Crusade content.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntryGroup>
+  </sharedSelectionEntryGroups>
+</catalogue>`;
+
+  it("extracts the faction's own Codex Battle Traits", () => {
+    const parsed = xmlParser.parse(FIXTURE_FACTION_CAT);
+    const honours = parseFactionCrusadeHonours(parsed.catalogue, "Chaos Space Marines");
+
+    const trait = honours.find((h) => h.name === "Living Hull");
+    expect(trait).toBeDefined();
+    expect(trait!.category).toBe("battleTrait");
+    expect(trait!.scope).toBe("faction");
+    expect(trait!.faction).toBe("Chaos Space Marines");
+    expect(trait!.campaign).toBeNull();
+  });
+
+  it("extracts the faction's own Crusade Relics with tier", () => {
+    const parsed = xmlParser.parse(FIXTURE_FACTION_CAT);
+    const honours = parseFactionCrusadeHonours(parsed.catalogue, "Chaos Space Marines");
+
+    const relic = honours.find((h) => h.name === "The Murder Blade");
+    expect(relic).toBeDefined();
+    expect(relic!.category).toBe("relic");
+    expect(relic!.scope).toBe("faction");
+    expect(relic!.faction).toBe("Chaos Space Marines");
+    expect(relic!.relicTier).toBe("Legendary");
+  });
+
+  it("extracts a faction Boon table (e.g. Chaos Boons)", () => {
+    const parsed = xmlParser.parse(FIXTURE_FACTION_CAT);
+    const honours = parseFactionCrusadeHonours(parsed.catalogue, "Chaos Space Marines");
+
+    const boon = honours.find((h) => h.name === "Warp Stalker");
+    expect(boon).toBeDefined();
+    expect(boon!.category).toBe("boon");
+    expect(boon!.scope).toBe("faction");
+  });
+
+  it("ignores a Crusade-content-tagged group whose name matches no known category", () => {
+    const parsed = xmlParser.parse(FIXTURE_FACTION_CAT);
+    const honours = parseFactionCrusadeHonours(parsed.catalogue, "Chaos Space Marines");
+
+    expect(honours.find((h) => h.name === "Some Champion Marker")).toBeUndefined();
+  });
+
+  it("ignores a group without the 'Crusade content' comment even if its content looks similar (e.g. matched-play Enhancements)", () => {
+    const parsed = xmlParser.parse(FIXTURE_FACTION_CAT);
+    const honours = parseFactionCrusadeHonours(parsed.catalogue, "Chaos Space Marines");
+
+    expect(honours.find((h) => h.name === "Mark of Chaos Ascendant")).toBeUndefined();
+  });
+});
+
+describe("collectAllProfiles: <infoLink type=\"profile\"> resolution", () => {
+  // Mirrors BSData/wh40k-10e's Adeptus Custodes catalogue: Custodian Guard's
+  // "Sentinel Blade & Praesidium Shield" model variant carries a top-level
+  // <infoLink type="profile"> to a catalogue-wide sharedProfiles entry named
+  // "Praesidium Shield", instead of an inline <profile> — this was silently
+  // dropped entirely before buildProfileIndex/profileIndex support was added,
+  // since only type="rule" infoLinks were ever resolved.
+  const FIXTURE_CAT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<catalogue id="test-cat" name="Imperium - Adeptus Custodes" xmlns="http://www.battlescribe.net/schema/catalogueSchema">
+  <sharedProfiles>
+    <profile id="shield-1" name="Praesidium Shield" hidden="false" typeId="9cc3-6d83-4dd3-9b64" typeName="Abilities">
+      <characteristics>
+        <characteristic name="Description">Add 1 to the bearer's Wounds characteristic.</characteristic>
+      </characteristics>
+    </profile>
+    <profile id="dmg-1" name="Damaged: 1-5 Wounds Remaining" hidden="false" typeId="c547-1836-d8a-ff4f" typeName="Unit">
+      <characteristics>
+        <characteristic name="M" typeId="e703-ecb6-5ce7-aec1">5&quot;</characteristic>
+      </characteristics>
+    </profile>
+  </sharedProfiles>
+  <sharedSelectionEntries>
+    <selectionEntry id="u1" name="Custodian Guard" type="model" hidden="false">
+      <infoLinks>
+        <infoLink id="l1" name="Praesidium Shield" hidden="false" targetId="shield-1" type="profile"/>
+      </infoLinks>
+    </selectionEntry>
+    <selectionEntry id="u2" name="Vexilla Wrapper Test" type="model" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="w1" name="Vexilla" type="upgrade" hidden="false">
+          <infoLinks>
+            <infoLink id="l2" name="Vexilla" hidden="false" targetId="shield-1" type="profile"/>
+          </infoLinks>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>
+    <selectionEntry id="u3" name="Non-ability Profile Link Test" type="model" hidden="false">
+      <infoLinks>
+        <infoLink id="l3" name="Damaged: 1-5 Wounds Remaining" hidden="false" targetId="dmg-1" type="profile"/>
+      </infoLinks>
+    </selectionEntry>
+  </sharedSelectionEntries>
+</catalogue>`;
+
+  it("resolves a type=\"profile\" infoLink on a unit/model entry against the profile index", () => {
+    const parsed = xmlParser.parse(FIXTURE_CAT);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[0];
+
+    const profiles = collectAllProfiles(entry, new Map(), profileIndex);
+    const unit = parseEntryNode(entry, "Adeptus Custodes", profiles);
+
+    expect(unit!.abilities.some((a) => a.name === "Praesidium Shield")).toBe(true);
+    expect(unit!.abilities.find((a) => a.name === "Praesidium Shield")!.description).toBe(
+      "Add 1 to the bearer's Wounds characteristic.",
+    );
+  });
+
+  it("does NOT resolve a type=\"profile\" infoLink sitting on a nested type=\"upgrade\" wrapper (regression guard)", () => {
+    // This is the deliberate safety boundary: allowing type="upgrade" here was tried and
+    // reverted because it also resolved a Crucible character's entire shared "Abilities"
+    // menu (every chapter's signature wargear) as if it all applied to one datasheet,
+    // ballooning one unit's ability count from ~6 to 42. See ruleLinksToAbilityProfiles's
+    // doc comment. This test locks in the (narrower, but safe) unit/model-only behavior.
+    const parsed = xmlParser.parse(FIXTURE_CAT);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[1];
+
+    const profiles = collectAllProfiles(entry, new Map(), profileIndex);
+    const unit = parseEntryNode(entry, "Adeptus Custodes", profiles);
+
+    expect(unit!.abilities.some((a) => a.name === "Vexilla")).toBe(false);
+  });
+
+  it("does not surface a type=\"profile\" infoLink target that isn't Abilities-typed", () => {
+    const parsed = xmlParser.parse(FIXTURE_CAT);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[2];
+
+    const profiles = collectAllProfiles(entry, new Map(), profileIndex);
+    const unit = parseEntryNode(entry, "Adeptus Custodes", profiles);
+
+    expect(unit!.abilities).toHaveLength(0);
+  });
+
+  it("without a profileIndex argument, type=\"profile\" infoLinks are silently ignored (backward compatible)", () => {
+    const parsed = xmlParser.parse(FIXTURE_CAT);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[0];
+
+    const profiles = collectAllProfiles(entry, new Map());
+    const unit = parseEntryNode(entry, "Adeptus Custodes", profiles);
+
+    expect(unit!.abilities).toHaveLength(0);
+  });
+});
+
+describe("extractAbilities (via parseEntryNode): dedup of identical abilities, keeping distinct same-named ones", () => {
+  it("dedupes an identical ability (same name AND description) collected from two branches", () => {
+    const xml = `<selectionEntry id="u1" name="Test Unit" type="unit" hidden="false">
+      <selectionEntries>
+        <selectionEntry id="m1" name="Variant A" type="model" hidden="false">
+          <profiles>
+            <profile id="p1" name="Leader" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Generic leader attachment rules text.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+        <selectionEntry id="m2" name="Variant B" type="model" hidden="false">
+          <profiles>
+            <profile id="p2" name="Leader" typeId="9cc3-6d83-4dd3-9b64">
+              <characteristics>
+                <characteristic name="Description">Generic leader attachment rules text.</characteristic>
+              </characteristics>
+            </profile>
+          </profiles>
+        </selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const unit = parseEntryNode(entry, "Tyranids");
+
+    expect(unit!.abilities.filter((a) => a.name === "Leader")).toHaveLength(1);
+  });
+
+  it("keeps two same-named abilities with different descriptions (e.g. Hive Tyrant's two distinct 'Leader' entries)", () => {
+    const xml = `<selectionEntry id="u1" name="Hive Tyrant" type="model" hidden="false">
+      <profiles>
+        <profile id="p1" name="Leader" typeId="9cc3-6d83-4dd3-9b64">
+          <characteristics>
+            <characteristic name="Description">This model can be attached to the following unit: Tyrant Guard.</characteristic>
+          </characteristics>
+        </profile>
+        <profile id="p2" name="Leader" typeId="9cc3-6d83-4dd3-9b64">
+          <characteristics>
+            <characteristic name="Description">Generic core-rules Leader/Bodyguard attachment text.</characteristic>
+          </characteristics>
+        </profile>
+      </profiles>
+    </selectionEntry>`;
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    const unit = parseEntryNode(entry, "Tyranids");
+
+    expect(unit!.abilities.filter((a) => a.name === "Leader")).toHaveLength(2);
   });
 });
 

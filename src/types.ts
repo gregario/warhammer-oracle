@@ -147,6 +147,40 @@ export type Enhancement = {
   gameSystem: GameSystem;
 };
 
+// === Crusade Honours (from BSData) ===
+//
+// Crusade Battle Traits, Crusade Relics, and Battle Scars are deliberately
+// NOT merged into Unit.abilities — every named character across every
+// faction shares the same handful of Crusade-only ability pools (see
+// UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN in fetch-data.ts), so duplicating
+// them onto each unit would bloat the dataset without adding unit-specific
+// signal. This is a separate, queryable data domain instead. 11th Edition
+// only (BSData/wh40k-10e's XML schema wasn't investigated for this content;
+// scope matched to the DetachmentPoints/Disposition precedent).
+
+/** Where a Crusade Honour comes from: the universal rulebook pool, a
+ * faction's own codex-specific pool, or a campaign supplement's pool. */
+export type CrusadeHonourScope = "generic" | "faction" | "campaign";
+
+export type CrusadeHonourCategory = "battleTrait" | "relic" | "battleScar" | "boon";
+
+/** Crusade Relics are tiered by rarity/power; only present when category === "relic". */
+export type CrusadeRelicTier = "Antiquity" | "Legendary" | "Artificer";
+
+export type CrusadeHonour = {
+  id: string;
+  name: string;
+  description: string;
+  category: CrusadeHonourCategory;
+  scope: CrusadeHonourScope;
+  /** Set when scope === "faction" (e.g. "Chaos Space Marines"). */
+  faction: string | null;
+  /** Set when scope === "campaign" (e.g. "Tyrannic War", "Armageddon"). */
+  campaign: string | null;
+  relicTier: CrusadeRelicTier | null;
+  gameSystem: GameSystem;
+};
+
 // === Stratagems (hand-curated) ===
 
 export type Stratagem = {

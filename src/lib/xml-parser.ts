@@ -9,6 +9,10 @@ import type {
   Detachment,
   Disposition,
   Enhancement,
+  CrusadeHonour,
+  CrusadeHonourCategory,
+  CrusadeHonourScope,
+  CrusadeRelicTier,
   KillTeamOperative,
   KillTeamOperativeProfile,
   KillTeamWeapon,
@@ -98,6 +102,7 @@ const PLURAL_CONTAINER_KEYS: Record<string, string> = {
   selectionEntryGroups: "selectionEntryGroup",
   entryLinks: "entryLink",
   profiles: "profile",
+  sharedProfiles: "profile",
   characteristics: "characteristic",
   categoryLinks: "categoryLink",
   costs: "cost",
@@ -234,8 +239,17 @@ function extractMeleeWeapons(profiles: any[]): MeleeWeapon[] {
     });
 }
 
+/**
+ * Deduped by name+description: a named character with multiple wargear-loadout
+ * model variants (e.g. Hive Tyrant's winged/wingless options) has each variant
+ * as its own nested model sub-entry, and a shared ability common to every
+ * variant (e.g. "Leader") is inlined identically on each one — walking every
+ * variant's own profiles is what correctly picks up variant-specific weapons,
+ * but it also means that shared ability gets collected once per variant.
+ * Confirmed via BSData/wh40k-10e: Hive Tyrant's "Leader" was appearing twice.
+ */
 function extractAbilities(profiles: any[]): Ability[] {
-  return profiles
+  const abilities = profiles
     .filter((p: any) => p["@_typeId"] === ABILITY_TYPE_ID)
     .map((p: any) => {
       const chars = ensureArray(p.characteristics?.characteristic);
@@ -244,6 +258,16 @@ function extractAbilities(profiles: any[]): Ability[] {
         description: getCharacteristic(chars, "Description"),
       };
     });
+
+  const seen = new Set<string>();
+  const deduped: Ability[] = [];
+  for (const ability of abilities) {
+    const key = `${ability.name}::${ability.description}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(ability);
+  }
+  return deduped;
 }
 
 /**
@@ -257,6 +281,18 @@ function extractAbilities(profiles: any[]): Ability[] {
  * abilities are ALL infoLink-based has an empty abilities list, and one
  * whose abilities are a mix (e.g. Chosen's inline inline abilities plus its
  * "Dark Pacts" infoLink) is silently missing the linked ones.
+ *
+ * A second, parallel indirection exists alongside it: <infoLink type="profile">,
+ * pointing at a *profile* (in a catalogue's own top-level profiles/sharedProfiles,
+ * or the game system's) rather than a <rule>. Confirmed via BSData/wh40k-10e:
+ * Adeptus Custodes' Custodian Guard references its wargear-linked "Praesidium
+ * Shield" and "Vexilla" abilities this way, and Tyranids' Hive Tyrant
+ * references "Will of the Hive Mind" the same way — both were silently
+ * dropped entirely before this was handled, since only `type="rule"` was
+ * ever resolved. Only kept when the target's own typeId is Abilities-typed
+ * (ABILITY_TYPE_ID) — some `type="profile"` infoLinks point at a plain stat
+ * profile instead (e.g. a battle-damage-tier "Damaged: X Wounds Remaining"
+ * profile), which isn't an ability and shouldn't be surfaced as one.
  *
  * Returns synthetic profile-shaped objects (matching what extractAbilities
  * expects) so callers can just concatenate them into the profiles array
@@ -275,27 +311,61 @@ function extractAbilities(profiles: any[]): Ability[] {
  * while the actual Ranged/Melee weapon profiles live one level down on its
  * child entries — without the type check those wrapper-level infoLinks were
  * misfiled as unit-level abilities instead.
+ *
+ * This also rules out extending profile-type resolution to type="upgrade"
+ * entries in general (tried and reverted): a Crucible/made-to-order
+ * character (e.g. Space Marines' "Champion of the Chapter [Crucible]")
+ * reaches a shared "Abilities" entryLinkGroup — a pick-one-of-many menu of
+ * every chapter's signature wargear ability (Ravenwing Bike, Thunderwolf
+ * Mount, Death Company gear, ...) — the same way Adeptus Custodes' Vexilla
+ * standard reaches its own single granted ability: both are `type="upgrade"`
+ * entries with their own `type="profile"` infoLink. Allowing type="upgrade"
+ * broadly resolved the menu's every option at once (one unit's ability count
+ * went from ~6 to 42, mixing in other chapters' abilities wholesale) — the
+ * same class of bug UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN exists to catch,
+ * just under an entryLink named plain "Abilities" that doesn't match that
+ * denylist. Vexilla itself stays unresolved as a result (a narrower, known
+ * gap) rather than risk that regression.
  */
-function ruleLinksToAbilityProfiles(entry: any, ruleIndex: Map<string, any>): any[] {
+function ruleLinksToAbilityProfiles(
+  entry: any,
+  ruleIndex: Map<string, any>,
+  profileIndex?: Map<string, any>,
+): any[] {
   const type = entry["@_type"];
   if (type !== "unit" && type !== "model") return [];
 
-  const links = ensureArray(entry.infoLinks?.infoLink).filter(
-    (l: any) => l["@_type"] === "rule" && l["@_hidden"] !== "true",
-  );
+  const links = ensureArray(entry.infoLinks?.infoLink).filter((l: any) => l["@_hidden"] !== "true");
   const profiles: any[] = [];
   for (const link of links) {
     const targetId = link["@_targetId"];
     if (!targetId) continue;
-    const rule = ruleIndex.get(targetId);
-    if (!rule || !rule.description) continue;
-    profiles.push({
-      "@_typeId": ABILITY_TYPE_ID,
-      "@_name": rule["@_name"] ?? link["@_name"] ?? "",
-      characteristics: {
-        characteristic: [{ "@_name": "Description", "#text": rule.description }],
-      },
-    });
+    const linkType = link["@_type"];
+
+    if (linkType === "rule") {
+      const rule = ruleIndex.get(targetId);
+      if (!rule || !rule.description) continue;
+      profiles.push({
+        "@_typeId": ABILITY_TYPE_ID,
+        "@_name": rule["@_name"] ?? link["@_name"] ?? "",
+        characteristics: {
+          characteristic: [{ "@_name": "Description", "#text": rule.description }],
+        },
+      });
+    } else if (linkType === "profile" && profileIndex) {
+      const target = profileIndex.get(targetId);
+      if (!target || target["@_typeId"] !== ABILITY_TYPE_ID) continue;
+      const chars = ensureArray(target.characteristics?.characteristic);
+      const description = getCharacteristic(chars, "Description");
+      if (!description) continue;
+      profiles.push({
+        "@_typeId": ABILITY_TYPE_ID,
+        "@_name": target["@_name"] ?? link["@_name"] ?? "",
+        characteristics: {
+          characteristic: [{ "@_name": "Description", "#text": description }],
+        },
+      });
+    }
   }
   return profiles;
 }
@@ -311,17 +381,18 @@ function ruleLinksToAbilityProfiles(entry: any, ruleIndex: Map<string, any>): an
  * fetch-data.ts, which calls this for the inline tree first.
  *
  * `ruleIndex`, if given, also resolves each level's rule-type infoLinks
- * (see ruleLinksToAbilityProfiles) into the returned profile list.
+ * (see ruleLinksToAbilityProfiles) into the returned profile list. `profileIndex`,
+ * if given, additionally resolves profile-type infoLinks the same way.
  */
-function collectAllProfiles(entry: any, ruleIndex?: Map<string, any>): any[] {
+function collectAllProfiles(entry: any, ruleIndex?: Map<string, any>, profileIndex?: Map<string, any>): any[] {
   const direct = ensureArray(entry.profiles?.profile);
-  const ruleAbilities = ruleIndex ? ruleLinksToAbilityProfiles(entry, ruleIndex) : [];
+  const ruleAbilities = ruleIndex ? ruleLinksToAbilityProfiles(entry, ruleIndex, profileIndex) : [];
 
   const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
-  const subEntryProfiles = subEntries.flatMap((sub: any) => collectAllProfiles(sub, ruleIndex));
+  const subEntryProfiles = subEntries.flatMap((sub: any) => collectAllProfiles(sub, ruleIndex, profileIndex));
 
   const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
-  const groupProfiles = groups.flatMap((group: any) => collectAllProfiles(group, ruleIndex));
+  const groupProfiles = groups.flatMap((group: any) => collectAllProfiles(group, ruleIndex, profileIndex));
 
   return [...direct, ...ruleAbilities, ...subEntryProfiles, ...groupProfiles];
 }
@@ -559,7 +630,14 @@ export function parseEntryNode(
   };
 }
 
-export { extractFaction, collectAllProfiles, buildRuleIndex, extractUnitSize, ruleLinksToAbilityProfiles };
+export {
+  extractFaction,
+  collectAllProfiles,
+  buildRuleIndex,
+  buildProfileIndex,
+  extractUnitSize,
+  ruleLinksToAbilityProfiles,
+};
 
 // === Public API ===
 
@@ -959,6 +1037,24 @@ function buildRuleIndex(catNode: any): Map<string, any> {
 }
 
 /**
+ * Build an index of shared profiles from a catalogue (or game system) node,
+ * for resolving <infoLink type="profile"> — the profile-based counterpart to
+ * buildRuleIndex/<infoLink type="rule"> (see ruleLinksToAbilityProfiles).
+ * Profiles may be in <profiles>, <sharedProfiles>, or both.
+ */
+function buildProfileIndex(catNode: any): Map<string, any> {
+  const index = new Map<string, any>();
+  const directProfiles = ensureArray(catNode.profiles?.profile);
+  const sharedProfiles = ensureArray(catNode.sharedProfiles?.profile);
+  for (const profile of [...directProfiles, ...sharedProfiles]) {
+    if (profile["@_id"]) {
+      index.set(profile["@_id"], profile);
+    }
+  }
+  return index;
+}
+
+/**
  * Find the "Detachment" selectionEntryGroup within a catalogue node
  * (may be in sharedSelectionEntries or sharedSelectionEntryGroups).
  * Returns the group containing the actual detachment choices, or null.
@@ -1197,4 +1293,163 @@ export function parseEnhancements(
   }
 
   return enhancements;
+}
+
+// === Crusade Honours (BSData/wh40k-11e only) ===
+//
+// Every Crusade Battle Trait / Crusade Relic / Battle Scar entry in BSData
+// follows the exact same shape as an Enhancement: a selectionEntry with an
+// Abilities-typed profile whose "Description" characteristic holds the rule
+// text (see extractEnhancementDescription above, reused here unchanged).
+// What differs is where these entries live:
+//   - Generic (universal): gameSystem-level "Main Rules Battle Scars".
+//   - Faction-specific: a catalogue's own top-level shared group tagged
+//     `comment: "Crusade content"` (e.g. CSM's "Codex Battle Traits",
+//     "Codex Crusade Relics", "Chaos Boons").
+//   - Campaign-specific: gameSystem-level groups named "<Campaign> Battle
+//     Traits" / "<Campaign> Crusade Relics" (Tyrannic War, Pariah Nexus,
+//     Nachmund Gauntlet, Armageddon), reachable either nested under a
+//     generic wrapper group or as their own top-level shared group —
+//     BSData is inconsistent about which, so campaign groups are found by
+//     recursively walking every shared group's subgroups rather than
+//     assuming a fixed nesting depth.
+// Confirmed against BSData/wh40k-11e's "Warhammer 40,000.json" (game
+// system) and "Chaos - Chaos Space Marines.json" (catalogue) — see
+// docs/design/11e-support.md for the investigation notes.
+
+/** Relic pools are further split by tier; matches BSData's own subgroup names exactly. */
+const CRUSADE_RELIC_TIERS: readonly CrusadeRelicTier[] = ["Antiquity", "Legendary", "Artificer"];
+
+/**
+ * Recursively collect every selectionEntryGroup (at any nesting depth, not
+ * following entryLinks) under `roots` whose own name matches `pattern`.
+ * Used to find campaign-specific Battle Trait/Crusade Relic pools without
+ * assuming a fixed nesting depth (see comment above).
+ */
+function collectGroupsMatching(roots: any[], pattern: RegExp): any[] {
+  const results: any[] = [];
+  function walk(node: any): void {
+    const name: string = node["@_name"] ?? "";
+    if (pattern.test(name)) results.push(node);
+    for (const child of ensureArray(node.selectionEntryGroups?.selectionEntryGroup)) {
+      walk(child);
+    }
+  }
+  roots.forEach(walk);
+  return results;
+}
+
+/** Build CrusadeHonour records from a flat list of selectionEntry nodes. */
+function honoursFromEntries(
+  entries: any[],
+  category: CrusadeHonourCategory,
+  scope: CrusadeHonourScope,
+  faction: string | null,
+  campaign: string | null,
+  relicTier: CrusadeRelicTier | null,
+): CrusadeHonour[] {
+  const out: CrusadeHonour[] = [];
+  for (const entry of entries) {
+    if (entry["@_hidden"] === "true") continue;
+    const description = extractEnhancementDescription(entry);
+    if (!description) continue;
+    out.push({
+      id: entry["@_id"],
+      name: entry["@_name"],
+      description,
+      category,
+      scope,
+      faction,
+      campaign,
+      relicTier,
+      gameSystem: "wh40k-11e" as const,
+    });
+  }
+  return out;
+}
+
+/** Extract a relic pool's entries, splitting by its Antiquity/Legendary/Artificer tier subgroups. */
+function honoursFromRelicPool(
+  relicGroup: any,
+  scope: CrusadeHonourScope,
+  faction: string | null,
+  campaign: string | null,
+): CrusadeHonour[] {
+  const out: CrusadeHonour[] = [];
+  const tierGroups = ensureArray(relicGroup.selectionEntryGroups?.selectionEntryGroup);
+  for (const tierGroup of tierGroups) {
+    const tierName: string = tierGroup["@_name"] ?? "";
+    const tier = CRUSADE_RELIC_TIERS.find((t) => tierName.startsWith(t)) ?? null;
+    const entries = ensureArray(tierGroup.selectionEntries?.selectionEntry);
+    out.push(...honoursFromEntries(entries, "relic", scope, faction, campaign, tier));
+  }
+  return out;
+}
+
+/**
+ * Extract the generic (universal Battle Scars) and campaign-specific
+ * (Battle Traits + Crusade Relics per campaign) Crusade Honours from the
+ * game system file. Called once per game system, not per catalogue.
+ */
+export function parseGenericCrusadeHonours(gameSystemNode: any): CrusadeHonour[] {
+  const honours: CrusadeHonour[] = [];
+  const roots = ensureArray(gameSystemNode.sharedSelectionEntryGroups?.selectionEntryGroup);
+
+  // Generic: Main Rules Battle Scars — universal, no faction/campaign gating.
+  const battleScarGroups = collectGroupsMatching(roots, /^Main Rules Battle Scars$/i);
+  for (const group of battleScarGroups) {
+    const entries = ensureArray(group.selectionEntries?.selectionEntry);
+    honours.push(...honoursFromEntries(entries, "battleScar", "generic", null, null, null));
+  }
+
+  // Campaign: "<Campaign> Battle Traits" (excludes the bare "Battle Traits"
+  // wrapper and faction-specific "Codex Battle Traits", neither of which
+  // matches the required "<something> Battle Traits" prefix pattern).
+  const campaignTraitGroups = collectGroupsMatching(roots, /^(.+) Battle Traits$/i);
+  for (const group of campaignTraitGroups) {
+    const name: string = group["@_name"] ?? "";
+    const campaign = name.replace(/\s*Battle Traits\s*$/i, "").trim();
+    const entries = ensureArray(group.selectionEntries?.selectionEntry);
+    honours.push(...honoursFromEntries(entries, "battleTrait", "campaign", null, campaign, null));
+  }
+
+  // Campaign: "<Campaign> Crusade Relics" (excludes faction-specific "Codex Crusade Relics").
+  const campaignRelicGroups = collectGroupsMatching(roots, /^(.+) Crusade Relics$/i);
+  for (const group of campaignRelicGroups) {
+    const name: string = group["@_name"] ?? "";
+    const campaign = name.replace(/\s*Crusade Relics\s*$/i, "").trim();
+    honours.push(...honoursFromRelicPool(group, "campaign", null, campaign));
+  }
+
+  return honours;
+}
+
+/**
+ * Extract a catalogue's own faction-specific Crusade Honours: its Codex
+ * Battle Traits, Codex Crusade Relics, and any Boon-style table (e.g.
+ * Chaos Boons). Only considers the catalogue's own top-level shared groups
+ * tagged `comment: "Crusade content"` — BSData's own marker for this
+ * content, which avoids hardcoding "Codex" as if every faction used that
+ * exact wording.
+ */
+export function parseFactionCrusadeHonours(catNode: any, faction: string): CrusadeHonour[] {
+  const honours: CrusadeHonour[] = [];
+  const groups = ensureArray(catNode.sharedSelectionEntryGroups?.selectionEntryGroup);
+
+  for (const group of groups) {
+    if (group.comment !== "Crusade content") continue;
+    const name: string = group["@_name"] ?? "";
+
+    if (/Battle Traits$/i.test(name)) {
+      const entries = ensureArray(group.selectionEntries?.selectionEntry);
+      honours.push(...honoursFromEntries(entries, "battleTrait", "faction", faction, null, null));
+    } else if (/Crusade Relics$/i.test(name)) {
+      honours.push(...honoursFromRelicPool(group, "faction", faction, null));
+    } else if (/Boons?$/i.test(name)) {
+      const entries = ensureArray(group.selectionEntries?.selectionEntry);
+      honours.push(...honoursFromEntries(entries, "boon", "faction", faction, null, null));
+    }
+  }
+
+  return honours;
 }
