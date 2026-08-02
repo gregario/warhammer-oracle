@@ -1,19 +1,59 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DETACHMENTS } from "../data/detachments.js";
+import { DETACHMENTS_11E } from "../data/detachments-11e.js";
 import { ENHANCEMENTS } from "../data/enhancements.js";
+import { ENHANCEMENTS_11E } from "../data/enhancements-11e.js";
 import { STRATAGEMS } from "../data/stratagems.js";
 import { fuzzySearch } from "../lib/search.js";
-import type { Detachment, Enhancement, Stratagem } from "../types.js";
+import { formatModeStamp } from "../lib/format.js";
+import type { Detachment, Enhancement, GameSystem, Stratagem } from "../types.js";
 
 function formatDetachment(
   det: Detachment,
   enhancements: Enhancement[],
   stratagems: Stratagem[],
+  gameSystem: GameSystem,
+  allDetachments: Detachment[],
 ): string {
   const sections: string[] = [];
 
-  sections.push(`# ${det.name}\n\n**Game:** Warhammer 40,000 | **Faction:** ${det.faction}`);
+  sections.push(formatModeStamp(gameSystem));
+
+  const headerParts = [`**Game:** Warhammer 40,000`, `**Faction:** ${det.faction}`];
+  if (det.detachmentPoints !== null) {
+    headerParts.push(`**Detachment Points:** ${det.detachmentPoints}`);
+  }
+  if (det.dispositions.length > 0) {
+    headerParts.push(`**Disposition(s):** ${det.dispositions.join(", ")}`);
+  }
+  sections.push(`# ${det.name}\n\n${headerParts.join(" | ")}`);
+
+  if (det.detachmentPoints !== null) {
+    sections.push(
+      `> An army's *total* Detachment Points across every detachment it uses is capped by battle size — ` +
+        `2 DP at Incursion, 3 DP at Strike Force. A single detachment whose own DP value (shown above) exceeds ` +
+        `that cap is still legal on its own (e.g. a 3 DP detachment at Incursion) — the cap only stops you from ` +
+        `combining multiple detachments whose DP adds up past the limit.`,
+    );
+  }
+
+  if (det.restrictionTags.length > 0) {
+    const exclusiveWith = allDetachments.filter(
+      (other) =>
+        other.faction === det.faction &&
+        other.id !== det.id &&
+        other.restrictionTags.some((tag) => det.restrictionTags.includes(tag)),
+    );
+    const namesPart =
+      exclusiveWith.length > 0
+        ? `: ${exclusiveWith.map((d) => `**${d.name}**`).join(", ")}`
+        : " (no other detachment currently sharing this tag was found in the data)";
+    sections.push(
+      `> **Mutually exclusive** (tag${det.restrictionTags.length > 1 ? "s" : ""}: ${det.restrictionTags.join(", ")}) — ` +
+        `cannot be used in the same army as${namesPart}.`,
+    );
+  }
 
   sections.push(`### Detachment Ability: ${det.ability.name}\n\n${det.ability.description}`);
 
@@ -29,6 +69,10 @@ function formatDetachment(
       (s) => `- **${s.name}** (${s.cpCost} CP, ${s.phase}) — ${s.effect}`,
     );
     sections.push(`### Stratagems\n\n${stratLines.join("\n")}`);
+  } else if (gameSystem === "wh40k-11e") {
+    sections.push(
+      "> No detachment-specific stratagem data for this detachment yet — only a few 11th Edition factions/detachments are covered so far (use lookup_stratagem for Core Stratagems, which apply to every army).",
+    );
   }
 
   return sections.join("\n\n");
@@ -38,16 +82,30 @@ function formatDetachment(
 export function registerLookupDetachment(server: McpServer): void {
   server.tool(
     "lookup_detachment",
-    "Look up a Warhammer 40,000 detachment by name. Returns the detachment ability, available enhancements, and associated stratagems.",
+    "Look up a Warhammer 40,000 detachment by name. Returns the detachment ability, available enhancements, " +
+      "associated stratagems, and (11th Edition only) its Detachment Points cost, eligible Force Disposition(s), " +
+      "and any other detachment(s) it's mutually exclusive with (e.g. Chaos Space Marines' Murdertalon Raiders " +
+      "and Nightmare Hunt cannot both be used in the same army).",
     {
       name: z.string().describe("Name or partial name of the detachment to look up"),
       faction: z
         .string()
         .optional()
         .describe("Optional faction filter (e.g. 'Space Marines', 'Necrons')"),
+      game_mode: z
+        .enum(["40k", "40k_10e", "40k_11e"])
+        .optional()
+        .describe(
+          "Edition: defaults to '40k_11e'. Pass '40k_10e' for 10th Edition detachments, " +
+            "'40k'/'40k_11e' for 11th Edition (current default).",
+        ),
     },
-    async ({ name, faction }) => {
-      let candidates: Detachment[] = [...DETACHMENTS];
+    async ({ name, faction, game_mode }) => {
+      const gameSystem: GameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
+      const detachmentsPool = gameSystem === "wh40k-10e" ? DETACHMENTS : DETACHMENTS_11E;
+      const enhancementsPool = gameSystem === "wh40k-10e" ? ENHANCEMENTS : ENHANCEMENTS_11E;
+
+      let candidates: Detachment[] = [...detachmentsPool];
 
       if (faction) {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
@@ -68,23 +126,21 @@ export function registerLookupDetachment(server: McpServer): void {
 
       const det = matches[0];
 
-      const relatedEnhancements = ENHANCEMENTS.filter(
+      const relatedEnhancements = enhancementsPool.filter(
         (e) =>
           e.faction === det.faction &&
           e.detachment.toLowerCase() === det.name.toLowerCase(),
       );
 
       const relatedStratagems = STRATAGEMS.filter(
-        (s) =>
-          s.detachment !== null &&
-          s.detachment.toLowerCase() === det.name.toLowerCase(),
+        (s) => s.detachment !== null && s.detachment.toLowerCase() === det.name.toLowerCase(),
       );
 
       return {
         content: [
           {
             type: "text" as const,
-            text: formatDetachment(det, relatedEnhancements, relatedStratagems),
+            text: formatDetachment(det, relatedEnhancements, relatedStratagems, gameSystem, detachmentsPool),
           },
         ],
       };

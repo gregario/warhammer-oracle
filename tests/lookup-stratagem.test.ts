@@ -24,7 +24,7 @@ describe("lookup_stratagem", () => {
       arguments: { name: "Command Re-roll" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-    expect(text).toContain("Command Re-roll");
+    expect(text).toContain("Command Re-Roll");
     expect(text).toContain("1");
     expect(text).toContain("Warhammer 40,000");
   });
@@ -55,5 +55,27 @@ describe("lookup_stratagem", () => {
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("lookup_ploy");
+  });
+
+  it("asks for disambiguation when an exact name collides across factions", async () => {
+    const result = await client.callTool({
+      name: "lookup_stratagem",
+      arguments: { name: "Spiteful Demise" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Multiple stratagems named");
+    expect(text).toContain("Legiones Daemonica");
+    expect(text).toContain("Chaos Knights");
+  });
+
+  it("resolves a name collision when disambiguated by faction", async () => {
+    const result = await client.callTool({
+      name: "lookup_stratagem",
+      arguments: { name: "Spiteful Demise", faction: "Chaos Knights" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Spiteful Demise");
+    expect(text).toContain("Chaos Knights");
+    expect(text).not.toContain("Multiple stratagems named");
   });
 });

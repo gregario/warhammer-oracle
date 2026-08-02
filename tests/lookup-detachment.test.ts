@@ -55,4 +55,74 @@ describe("lookup_detachment", () => {
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("No detachment found");
   });
+
+  it("defaults to 11th Edition and notes detachment stratagems aren't checked yet", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Gladius Task Force" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 11e]");
+    expect(text).toContain("only a few 11th Edition factions/detachments are covered so far");
+  });
+
+  it("returns 10th Edition stratagems when game_mode is pinned to 40k_10e", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Gladius Task Force", game_mode: "40k_10e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 10e]");
+  });
+
+  it("shows Detachment Points and Force Disposition for an 11th Edition detachment", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Gladius Task Force" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Detachment Points");
+    expect(text).toContain("Disposition(s)");
+    expect(text).toMatch(/Priority Assets|Take and Hold|Purge the Foe|Reconnaissance|Disruption/);
+    expect(text).toContain("Incursion");
+    expect(text).toContain("Strike Force");
+  });
+
+  it("does not show Detachment Points/Disposition for a 10th Edition detachment (the concept doesn't exist pre-11e)", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Gladius Task Force", game_mode: "40k_10e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).not.toContain("Detachment Points");
+    expect(text).not.toContain("Disposition(s)");
+  });
+
+  it("names the specific mutually-exclusive detachment (Chaos Space Marines' Murdertalon Raiders / Nightmare Hunt share the Nightmare tag)", async () => {
+    const raiders = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Murdertalon Raiders", faction: "Chaos Space Marines" },
+    });
+    const raidersText = (raiders.content as Array<{ type: string; text: string }>)[0].text;
+    expect(raidersText).toContain("Mutually exclusive");
+    expect(raidersText).toContain("Nightmare");
+    expect(raidersText).toContain("Nightmare Hunt");
+
+    const nightmareHunt = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Nightmare Hunt", faction: "Chaos Space Marines" },
+    });
+    const nightmareHuntText = (nightmareHunt.content as Array<{ type: string; text: string }>)[0].text;
+    expect(nightmareHuntText).toContain("Mutually exclusive");
+    expect(nightmareHuntText).toContain("Murdertalon Raiders");
+  });
+
+  it("does not show a Mutually exclusive note for a detachment with no restriction tag", async () => {
+    const result = await client.callTool({
+      name: "lookup_detachment",
+      arguments: { name: "Chaos Cult", faction: "Chaos Space Marines" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).not.toContain("Mutually exclusive");
+  });
 });

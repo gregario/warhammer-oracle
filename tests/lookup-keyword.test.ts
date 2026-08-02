@@ -28,7 +28,7 @@ describe("lookup_keyword tool", () => {
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("Devastating Wounds");
     // Official description
-    expect(text).toContain("Critical wounds");
+    expect(text).toContain("critical wound");
     // Plain English
     expect(text).toContain("skips the enemy's armour save");
   });
@@ -123,7 +123,7 @@ describe("lookup_keyword tool", () => {
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("Heavy");
-    expect(text).toContain("Stand still and you shoot better");
+    expect(text).toContain("You get +1 to hit with Heavy weapons");
     expect(text).not.toContain("Examples");
   });
 });

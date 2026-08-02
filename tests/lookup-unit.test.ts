@@ -21,20 +21,43 @@ describe("lookup_unit tool", () => {
   });
 
   it("returns a datasheet for a known unit", async () => {
+    // Faction pinned: Abaddon is also a legal ally import into Chaos Daemons/Chaos
+    // Knights armies (like Imperial Knights' Canis Rex under 17 Imperium factions),
+    // so an unfiltered lookup can resolve to any of his faction copies.
     const result = await client.callTool({
       name: "lookup_unit",
-      arguments: { unit_name: "Abaddon the Despoiler" },
+      arguments: { unit_name: "Abaddon the Despoiler", faction: "Chaos Space Marines", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 10e]");
     expect(text).toContain("Abaddon the Despoiler");
     expect(text).toContain("Chaos Space Marines");
     expect(text).toContain("270");
   });
 
-  it("shows unit stats (M, T, SV, W, LD, OC)", async () => {
+  it("defaults to 11th Edition data and stamps the mode", async () => {
     const result = await client.callTool({
       name: "lookup_unit",
       arguments: { unit_name: "Abaddon the Despoiler" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 11e]");
+    expect(text).toContain("Abaddon the Despoiler");
+  });
+
+  it("returns 11th Edition data explicitly via game_mode: '40k_11e'", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 11e]");
+  });
+
+  it("shows unit stats (M, T, SV, W, LD, OC)", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("M");
@@ -52,7 +75,7 @@ describe("lookup_unit tool", () => {
   it("shows ranged weapons", async () => {
     const result = await client.callTool({
       name: "lookup_unit",
-      arguments: { unit_name: "Abaddon the Despoiler" },
+      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("Ranged Weapons");
@@ -64,7 +87,7 @@ describe("lookup_unit tool", () => {
   it("shows melee weapons", async () => {
     const result = await client.callTool({
       name: "lookup_unit",
-      arguments: { unit_name: "Abaddon the Despoiler" },
+      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("Melee Weapons");
@@ -75,7 +98,7 @@ describe("lookup_unit tool", () => {
   it("shows abilities", async () => {
     const result = await client.callTool({
       name: "lookup_unit",
-      arguments: { unit_name: "Abaddon the Despoiler" },
+      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("Abilities");
@@ -86,12 +109,32 @@ describe("lookup_unit tool", () => {
   it("shows keywords", async () => {
     const result = await client.callTool({
       name: "lookup_unit",
-      arguments: { unit_name: "Abaddon the Despoiler" },
+      arguments: { unit_name: "Abaddon the Despoiler", game_mode: "40k_10e" },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("Keywords");
     expect(text).toContain("Terminator");
     expect(text).toContain("Epic Hero");
+  });
+
+  it("shows unit size for a fixed-size unit", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Obliterators", faction: "Chaos Space Marines", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Unit Size");
+    expect(text).toContain("2 models");
+  });
+
+  it("shows unit size as a range for a variable-size unit", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Legionaries", faction: "Chaos Space Marines", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("Unit Size");
+    expect(text).toContain("5-10 models");
   });
 
   it("returns friendly message for unknown unit", async () => {

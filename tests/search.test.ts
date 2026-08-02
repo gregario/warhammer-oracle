@@ -53,4 +53,31 @@ describe("fuzzySearch", () => {
     expect(result).not.toBe(items);
     expect(result).toEqual(items);
   });
+
+  it("searches text inside arrays of objects (e.g. abilities)", () => {
+    interface Ability {
+      name: string;
+      description: string;
+    }
+    interface UnitWithAbilities {
+      name: string;
+      abilities: Ability[];
+    }
+    const units: UnitWithAbilities[] = [
+      {
+        name: "Sergeant",
+        abilities: [{ name: "Stealth", description: "This unit is hard to hit at range." }],
+      },
+      {
+        name: "Grunt",
+        abilities: [{ name: "Zealot", description: "Re-roll failed Hit rolls in melee." }],
+      },
+    ];
+
+    // Matches on ability name
+    expect(fuzzySearch(units, "stealth", ["abilities"]).map((u) => u.name)).toEqual(["Sergeant"]);
+    // Matches on ability description text, not just name
+    expect(fuzzySearch(units, "hard to hit", ["abilities"]).map((u) => u.name)).toEqual(["Sergeant"]);
+    expect(fuzzySearch(units, "re-roll", ["abilities"]).map((u) => u.name)).toEqual(["Grunt"]);
+  });
 });

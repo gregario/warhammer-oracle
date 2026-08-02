@@ -415,12 +415,16 @@ describe("parseCatalogue", () => {
     expect(units[0].points).toBeNull();
   });
 
-  it("extracts keywords, filtering out Faction: prefix and hidden", () => {
+  it("extracts keywords, stripping the 'Faction: ' label prefix (but keeping the army keyword itself) and hidden entries", () => {
     const units = parseCatalogue(CATALOGUE_XML);
     const keywords = units[0].keywords;
 
     expect(keywords).toContain("Infantry");
     expect(keywords).toContain("Imperium");
+    // The real army-wide rules keyword ("Faction: Adeptus Astartes" in BSData) must survive
+    // with just the label prefix stripped, not be dropped outright — ability/enhancement/
+    // stratagem text constantly gates on it (e.g. "ADEPTUS ASTARTES unit").
+    expect(keywords).toContain("Adeptus Astartes");
     expect(keywords).not.toContain("Faction: Adeptus Astartes");
     expect(keywords).not.toContain("HiddenKeyword");
   });

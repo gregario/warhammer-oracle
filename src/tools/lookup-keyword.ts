@@ -18,6 +18,8 @@ function formatCuratedKeyword(kw: KeywordDefinition): string {
     sections.push(`## Examples\n\n${exampleLines.join("\n")}`);
   }
 
+  sections.push("> Reflects the Warhammer 40,000 11th Edition Core Rules.");
+
   return sections.join("\n\n");
 }
 
@@ -29,6 +31,7 @@ function formatSharedRule(rule: { name: string; description: string }): string {
     `*Source: rules data (BSData). A curated plain-English explanation is not yet available for this keyword.*`,
   );
   sections.push(`## Definition\n\n${rule.description}`);
+  sections.push("> Reflects 10th Edition core rules; not yet updated for 11th Edition.");
 
   return sections.join("\n\n");
 }

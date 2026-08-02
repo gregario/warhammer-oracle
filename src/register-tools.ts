@@ -11,6 +11,8 @@ import { registerSearchStratagems } from "./tools/search-stratagems.js";
 import { registerLookupDetachment } from "./tools/lookup-detachment.js";
 import { registerLookupEnhancement } from "./tools/lookup-enhancement.js";
 import { registerLookupPloy } from "./tools/lookup-ploy.js";
+import { registerDeterminePrimaryMission } from "./tools/determine-primary-mission.js";
+import { registerLookupCrusade } from "./tools/lookup-crusade.js";
 
 export function registerTools(server: McpServer): void {
   registerLookupUnit(server);
@@ -25,4 +27,6 @@ export function registerTools(server: McpServer): void {
   registerLookupDetachment(server);
   registerLookupEnhancement(server);
   registerLookupPloy(server);
+  registerDeterminePrimaryMission(server);
+  registerLookupCrusade(server);
 }

@@ -141,4 +141,56 @@ describe("search_units tool", () => {
     expect(text).toContain("Necrons");
     expect(text).toContain("50");
   });
+
+  it("filters 40K units by ability name/text", async () => {
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "", ability: "Feel No Pain" },
+    });
+    const text = getText(result);
+    expect(text).toContain("**");
+    expect(text).not.toContain("No units found");
+  });
+
+  it("matches ability text via the main query for 40K units", async () => {
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "Feel No Pain" },
+    });
+    const text = getText(result);
+    expect(text).not.toContain("No units found");
+  });
+
+  it("shows the ability filter in the no-results message", async () => {
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "", ability: "Totally Nonexistent Ability XYZZY" },
+    });
+    const text = getText(result);
+    expect(text).toContain("No units found");
+    expect(text).toContain("Totally Nonexistent Ability XYZZY");
+  });
+
+  it("filters Kill Team operatives by ability name/text", async () => {
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "", ability: "Iron Halo", game_mode: "kill_team" },
+    });
+    const text = getText(result);
+    expect(text).toContain("**");
+    expect(text).not.toContain("No Kill Team operatives found");
+  });
+
+  it("finds Kroot via the faction filter even though BSData files them under T'au Empire", async () => {
+    // Kroot aren't their own top-level faction in BSData — they're a keyword-tagged
+    // sub-force inside the T'au Empire catalogue, so a plain faction match on the
+    // "faction" field alone finds nothing. The filter also checks keywords for this.
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "", faction: "Kroot" },
+    });
+    const text = getText(result);
+    expect(text).not.toContain("No units found");
+    expect(text).toContain("T'au Empire");
+  });
 });

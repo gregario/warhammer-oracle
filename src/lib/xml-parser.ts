@@ -5,8 +5,14 @@ import type {
   RangedWeapon,
   MeleeWeapon,
   Ability,
+  UnitSize,
   Detachment,
+  Disposition,
   Enhancement,
+  CrusadeHonour,
+  CrusadeHonourCategory,
+  CrusadeHonourScope,
+  CrusadeRelicTier,
   KillTeamOperative,
   KillTeamOperativeProfile,
   KillTeamWeapon,
@@ -18,6 +24,16 @@ const RANGED_WEAPON_TYPE_ID = "f77d-b953-8fa4-b762";
 const MELEE_WEAPON_TYPE_ID = "8a40-4aaa-c780-9046";
 const ABILITY_TYPE_ID = "9cc3-6d83-4dd3-9b64";
 const POINTS_COST_TYPE_ID = "51b2-306e-1021-d207";
+// 11th Edition only (absent from BSData/wh40k-10e entirely) — a detachment's
+// "Detachment Points" cost, and the categoryLink naming its Force Disposition.
+const DETACHMENT_POINTS_TYPE_ID = "82ae-1066-5107-6ae0";
+const KNOWN_DISPOSITIONS: readonly Disposition[] = [
+  "Take and Hold",
+  "Purge the Foe",
+  "Reconnaissance",
+  "Priority Assets",
+  "Disruption",
+];
 
 // === Profile type IDs from BattleScribe Kill Team (2024) ===
 const KT_OPERATIVE_PROFILE_TYPE_ID = "5156-3fb9-39ce-7bdb";
@@ -37,6 +53,7 @@ const ARRAY_TAGS = [
   "rule",
   "entryLink",
   "catalogueLink",
+  "constraint",
 ];
 
 const parser = new XMLParser({
@@ -56,12 +73,93 @@ function ensureArray<T>(val: T | T[] | undefined | null): T[] {
   return Array.isArray(val) ? val : [val];
 }
 
+// === JSON → XML-shape normalization (for BSData/wh40k-11e, which ships JSON) ===
+
+// Keys that appear as XML attributes in the 10e schema (accessed elsewhere in this
+// file via `["@_..."]`) but are plain properties in BSData's 11e JSON export.
+const ATTR_ALIAS_KEYS = new Set([
+  "id",
+  "name",
+  "hidden",
+  "type",
+  "typeId",
+  "targetId",
+  "value",
+  "library",
+  "field",
+  "scope",
+]);
+
+// BSData's 11e JSON represents repeatable elements as flat arrays (e.g.
+// `"profiles": [ {...}, {...} ]`), whereas the 10e XML schema (and every
+// extractor in this file) expects the XML wrapper shape
+// `{ profiles: { profile: [...] } }`. This maps each flat container key to
+// the singular child key the extractors read via `ensureArray(node.X?.y)`.
+const PLURAL_CONTAINER_KEYS: Record<string, string> = {
+  sharedSelectionEntries: "selectionEntry",
+  sharedSelectionEntryGroups: "selectionEntryGroup",
+  selectionEntries: "selectionEntry",
+  selectionEntryGroups: "selectionEntryGroup",
+  entryLinks: "entryLink",
+  profiles: "profile",
+  sharedProfiles: "profile",
+  characteristics: "characteristic",
+  categoryLinks: "categoryLink",
+  costs: "cost",
+  rules: "rule",
+  sharedRules: "rule",
+  infoLinks: "infoLink",
+  catalogueLinks: "catalogueLink",
+  constraints: "constraint",
+};
+
+/**
+ * Recursively reshape a parsed BSData 11e JSON node into the same shape
+ * fast-xml-parser produces for 10e XML, so every extractor in this file
+ * (parseEntryNode, parseDetachments, parseEnhancements, collectAllProfiles,
+ * etc.) can run against it unchanged: known attribute-like keys get an
+ * `"@_"`-prefixed string alias, `"$text"` becomes `"#text"`, and known
+ * flat-array containers get re-wrapped into the XML's nested plural/singular
+ * shape.
+ */
+export function normalizeJsonNode(node: any): any {
+  if (Array.isArray(node)) {
+    return node.map((item) => normalizeJsonNode(item));
+  }
+  if (node !== null && typeof node === "object") {
+    const out: any = {};
+    for (const [key, val] of Object.entries(node)) {
+      if (key === "$text") {
+        out["#text"] = val;
+        continue;
+      }
+
+      const singular = PLURAL_CONTAINER_KEYS[key];
+      if (singular && (Array.isArray(val) || (val !== null && typeof val === "object"))) {
+        const items = ensureArray(val as any).map((item) => normalizeJsonNode(item));
+        out[key] = { [singular]: items };
+        continue;
+      }
+
+      out[key] = normalizeJsonNode(val);
+      if (ATTR_ALIAS_KEYS.has(key) && (val === null || typeof val !== "object")) {
+        out["@_" + key] = typeof val === "boolean" ? String(val) : val;
+      }
+    }
+    return out;
+  }
+  return node;
+}
+
 function getCharacteristic(
   characteristics: any[],
   name: string
 ): string {
+  // Case-insensitive: BSData/wh40k-11e renamed some characteristics'
+  // capitalization (e.g. 10e's "SV" is "Sv" in 11e's schema) even though the
+  // typeIds are unchanged.
   const char = characteristics.find(
-    (c: any) => c["@_name"] === name
+    (c: any) => typeof c["@_name"] === "string" && c["@_name"].toLowerCase() === name.toLowerCase()
   );
   if (!char) return "";
   const text = char["#text"];
@@ -141,8 +239,17 @@ function extractMeleeWeapons(profiles: any[]): MeleeWeapon[] {
     });
 }
 
+/**
+ * Deduped by name+description: a named character with multiple wargear-loadout
+ * model variants (e.g. Hive Tyrant's winged/wingless options) has each variant
+ * as its own nested model sub-entry, and a shared ability common to every
+ * variant (e.g. "Leader") is inlined identically on each one — walking every
+ * variant's own profiles is what correctly picks up variant-specific weapons,
+ * but it also means that shared ability gets collected once per variant.
+ * Confirmed via BSData/wh40k-10e: Hive Tyrant's "Leader" was appearing twice.
+ */
 function extractAbilities(profiles: any[]): Ability[] {
-  return profiles
+  const abilities = profiles
     .filter((p: any) => p["@_typeId"] === ABILITY_TYPE_ID)
     .map((p: any) => {
       const chars = ensureArray(p.characteristics?.characteristic);
@@ -151,32 +258,143 @@ function extractAbilities(profiles: any[]): Ability[] {
         description: getCharacteristic(chars, "Description"),
       };
     });
+
+  const seen = new Set<string>();
+  const deduped: Ability[] = [];
+  for (const ability of abilities) {
+    const key = `${ability.name}::${ability.description}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(ability);
+  }
+  return deduped;
 }
 
-/** Collect all profiles from direct profiles, sub-entries, and entry groups */
-function collectAllProfiles(entry: any): any[] {
-  const directProfiles = ensureArray(entry.profiles?.profile);
+/**
+ * Many named abilities (Deep Strike, Infiltrators, Scouts, Lone Operative,
+ * Feel No Pain, Leader, faction ones like Oath of Moment or Dark Pacts...)
+ * aren't given to a unit as an inline <profile> — they're referenced via an
+ * <infoLink type="rule"> pointing at the shared rule text (in the game
+ * system file or a catalogue's own rules/sharedRules), the same way a
+ * Detachment's ability can be inline or an infoLink (see
+ * extractDetachmentAbility). Without resolving these, any unit whose
+ * abilities are ALL infoLink-based has an empty abilities list, and one
+ * whose abilities are a mix (e.g. Chosen's inline inline abilities plus its
+ * "Dark Pacts" infoLink) is silently missing the linked ones.
+ *
+ * A second, parallel indirection exists alongside it: <infoLink type="profile">,
+ * pointing at a *profile* (in a catalogue's own top-level profiles/sharedProfiles,
+ * or the game system's) rather than a <rule>. Confirmed via BSData/wh40k-10e:
+ * Adeptus Custodes' Custodian Guard references its wargear-linked "Praesidium
+ * Shield" and "Vexilla" abilities this way, and Tyranids' Hive Tyrant
+ * references "Will of the Hive Mind" the same way — both were silently
+ * dropped entirely before this was handled, since only `type="rule"` was
+ * ever resolved. Only kept when the target's own typeId is Abilities-typed
+ * (ABILITY_TYPE_ID) — some `type="profile"` infoLinks point at a plain stat
+ * profile instead (e.g. a battle-damage-tier "Damaged: X Wounds Remaining"
+ * profile), which isn't an ability and shouldn't be surfaced as one.
+ *
+ * Returns synthetic profile-shaped objects (matching what extractAbilities
+ * expects) so callers can just concatenate them into the profiles array
+ * rather than threading a second parallel "abilities" collection everywhere.
+ *
+ * Only resolved on entries whose own type is "unit" or "model" — i.e.
+ * genuine datasheet/model slots (Chosen itself; a champion sub-model like
+ * "Chosen Champion"). Weapon items are always type "upgrade" in BSData, and
+ * carry this exact same infoLink shape for their own weapon-ability
+ * keywords (e.g. a Combi-weapon's infoLinks to "Anti", "Devastating
+ * Wounds", "Rapid Fire" — already surfaced via that profile's own Keywords
+ * characteristic/parseWeaponKeywords). Checking the entry's own profile
+ * type isn't enough to exclude these: some weapon items (e.g. a "Plasma
+ * pistol" wrapper choosing between standard/supercharge firing modes) carry
+ * their shared keywords like Pistol/Hazardous on the type="upgrade" wrapper
+ * while the actual Ranged/Melee weapon profiles live one level down on its
+ * child entries — without the type check those wrapper-level infoLinks were
+ * misfiled as unit-level abilities instead.
+ *
+ * This also rules out extending profile-type resolution to type="upgrade"
+ * entries in general (tried and reverted): a Crucible/made-to-order
+ * character (e.g. Space Marines' "Champion of the Chapter [Crucible]")
+ * reaches a shared "Abilities" entryLinkGroup — a pick-one-of-many menu of
+ * every chapter's signature wargear ability (Ravenwing Bike, Thunderwolf
+ * Mount, Death Company gear, ...) — the same way Adeptus Custodes' Vexilla
+ * standard reaches its own single granted ability: both are `type="upgrade"`
+ * entries with their own `type="profile"` infoLink. Allowing type="upgrade"
+ * broadly resolved the menu's every option at once (one unit's ability count
+ * went from ~6 to 42, mixing in other chapters' abilities wholesale) — the
+ * same class of bug UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN exists to catch,
+ * just under an entryLink named plain "Abilities" that doesn't match that
+ * denylist. Vexilla itself stays unresolved as a result (a narrower, known
+ * gap) rather than risk that regression.
+ */
+function ruleLinksToAbilityProfiles(
+  entry: any,
+  ruleIndex: Map<string, any>,
+  profileIndex?: Map<string, any>,
+): any[] {
+  const type = entry["@_type"];
+  if (type !== "unit" && type !== "model") return [];
 
-  // Profiles from selectionEntries (sub-entries)
+  const links = ensureArray(entry.infoLinks?.infoLink).filter((l: any) => l["@_hidden"] !== "true");
+  const profiles: any[] = [];
+  for (const link of links) {
+    const targetId = link["@_targetId"];
+    if (!targetId) continue;
+    const linkType = link["@_type"];
+
+    if (linkType === "rule") {
+      const rule = ruleIndex.get(targetId);
+      if (!rule || !rule.description) continue;
+      profiles.push({
+        "@_typeId": ABILITY_TYPE_ID,
+        "@_name": rule["@_name"] ?? link["@_name"] ?? "",
+        characteristics: {
+          characteristic: [{ "@_name": "Description", "#text": rule.description }],
+        },
+      });
+    } else if (linkType === "profile" && profileIndex) {
+      const target = profileIndex.get(targetId);
+      if (!target || target["@_typeId"] !== ABILITY_TYPE_ID) continue;
+      const chars = ensureArray(target.characteristics?.characteristic);
+      const description = getCharacteristic(chars, "Description");
+      if (!description) continue;
+      profiles.push({
+        "@_typeId": ABILITY_TYPE_ID,
+        "@_name": target["@_name"] ?? link["@_name"] ?? "",
+        characteristics: {
+          characteristic: [{ "@_name": "Description", "#text": description }],
+        },
+      });
+    }
+  }
+  return profiles;
+}
+
+/**
+ * Collect all profiles from an entry's own profiles plus every descendant
+ * selectionEntry/selectionEntryGroup, at any nesting depth — e.g. weapon
+ * profiles for units like Obliterators live 3 levels down (unit -> model
+ * sub-entry -> "Wargear" group -> weapon entry -> profiles), which a
+ * shallow 2-level-only traversal misses entirely. Does not follow
+ * entryLinks (references to shared content elsewhere by id) — that's a
+ * separate concern handled by collectAllProfilesWithGlobalLinks in
+ * fetch-data.ts, which calls this for the inline tree first.
+ *
+ * `ruleIndex`, if given, also resolves each level's rule-type infoLinks
+ * (see ruleLinksToAbilityProfiles) into the returned profile list. `profileIndex`,
+ * if given, additionally resolves profile-type infoLinks the same way.
+ */
+function collectAllProfiles(entry: any, ruleIndex?: Map<string, any>, profileIndex?: Map<string, any>): any[] {
+  const direct = ensureArray(entry.profiles?.profile);
+  const ruleAbilities = ruleIndex ? ruleLinksToAbilityProfiles(entry, ruleIndex, profileIndex) : [];
+
   const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
-  const subProfiles = subEntries.flatMap((sub: any) =>
-    ensureArray(sub.profiles?.profile)
-  );
+  const subEntryProfiles = subEntries.flatMap((sub: any) => collectAllProfiles(sub, ruleIndex, profileIndex));
 
-  // Profiles from selectionEntryGroups
-  const groups = ensureArray(
-    entry.selectionEntryGroups?.selectionEntryGroup
-  );
-  const groupProfiles = groups.flatMap((group: any) => {
-    const groupEntries = ensureArray(
-      group.selectionEntries?.selectionEntry
-    );
-    return groupEntries.flatMap((ge: any) =>
-      ensureArray(ge.profiles?.profile)
-    );
-  });
+  const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
+  const groupProfiles = groups.flatMap((group: any) => collectAllProfiles(group, ruleIndex, profileIndex));
 
-  return [...directProfiles, ...subProfiles, ...groupProfiles];
+  return [...direct, ...ruleAbilities, ...subEntryProfiles, ...groupProfiles];
 }
 
 function extractPoints(entry: any): number | null {
@@ -188,12 +406,194 @@ function extractPoints(entry: any): number | null {
   return Number(ptsCost["@_value"]);
 }
 
-function extractKeywords(entry: any): string[] {
+/**
+ * BSData's "Faction: X" categoryLinks are NOT redundant bookkeeping that
+ * duplicates the catalogue-derived `faction` field — they're how the actual
+ * army-wide rules keyword (HERETIC ASTARTES, ADEPTUS ASTARTES, NECRONS,
+ * ORKS, ...) is attached per-unit, the same keyword that ability/enhancement/
+ * stratagem text constantly gates on (e.g. "HERETIC ASTARTES model only").
+ * Previously dropped entirely (`!name.startsWith("Faction:")`), which is why
+ * every unit in some catalogues (confirmed: all 137 Chaos Space Marines
+ * units) had zero army-keyword tag at all. Multi-catalogue-embedded legions
+ * also use this same mechanism for their own sub-tag (e.g. 10e's CSM
+ * catalogue embeds Emperor's Children units tagged "Faction: Emperor's
+ * Children" alongside the shared "Faction: Heretic Astartes"), so this
+ * strips only the "Faction: " label prefix and keeps the value as a normal
+ * keyword, rather than dropping the category link altogether.
+ */
+function extractOwnKeywords(entry: any): string[] {
   const links = ensureArray(entry.categoryLinks?.categoryLink);
-  return links
+  const names = links
     .filter((cl: any) => cl["@_hidden"] !== "true")
-    .map((cl: any) => cl["@_name"] as string)
-    .filter((name: string) => !name.startsWith("Faction:"));
+    .map((cl: any) => (cl["@_name"] as string).replace(/^Faction:\s*/, ""));
+  // A few BSData entries (e.g. Grey Knights' Rhino) list the same categoryLink
+  // name more than once — dedupe defensively rather than surface a repeated tag.
+  return [...new Set(names)];
+}
+
+/**
+ * A handful of named-character units (Fabius Bile, Traitor Enforcer, ...)
+ * are structured in BSData as a thin top-level "unit" wrapper around one or
+ * more nested "model" children (Fabius Bile actually has two — himself plus
+ * an attached "Surgeon Acolyte" companion model) that carry the actual
+ * keyword set — the wrapper's own categoryLinks are just a bare tag or two
+ * (e.g. "Epic Hero" alone), while the real Infantry/Character/Chaos/faction
+ * tags live on those direct children. Detected structurally (the entry has
+ * direct "model"-type children under its own `selectionEntries`) rather
+ * than by name: a normal multi-model squad's weapon-option variants are
+ * nested inside `selectionEntryGroups` instead (Chosen, Nurglings, Wolf
+ * Scouts, ...), a different shape this deliberately doesn't match, and
+ * those squads already carry their full keyword set directly on the
+ * top-level entry regardless. This only ever adds keywords, never removes
+ * any, so it's a no-op for entries that don't have this exact shape.
+ */
+function extractKeywords(entry: any): string[] {
+  const own = extractOwnKeywords(entry);
+  if (entry["@_type"] !== "unit") return own;
+
+  const modelChildren = ensureArray(entry.selectionEntries?.selectionEntry).filter(
+    (c: any) => c["@_hidden"] !== "true" && c["@_type"] === "model",
+  );
+  const merged = [...own];
+  for (const child of modelChildren) {
+    for (const kw of extractKeywords(child)) {
+      if (!merged.includes(kw)) merged.push(kw);
+    }
+  }
+  return merged;
+}
+
+/**
+ * A child selectionEntry/selectionEntryGroup's own model-count range, read
+ * from its "selections" constraints scoped to "parent" — the BattleScribe
+ * convention for "how many of this specific slot are included when the
+ * containing unit is selected once" (as opposed to scope "force", which
+ * bounds how many copies of the whole unit a roster can include, and is
+ * unrelated to model count — see feedback_bsdata_constraint_semantics).
+ * Returns null if the child has no such constraint at all.
+ */
+function extractCountConstraint(node: any): UnitSize | null {
+  const constraints = ensureArray(node.constraints?.constraint);
+  let min: number | null = null;
+  let max: number | null = null;
+  for (const c of constraints) {
+    if (c["@_field"] !== "selections" || c["@_scope"] !== "parent") continue;
+    const value = Number(c["@_value"]);
+    if (c["@_type"] === "min") min = value;
+    else if (c["@_type"] === "max") max = value;
+  }
+  if (min === null && max === null) return null;
+  return { min: min ?? max!, max: max ?? min! };
+}
+
+/**
+ * Whether a child is itself a wargear item (carries a Ranged/Melee weapon
+ * profile directly, with no "Unit" profile of its own) rather than a model
+ * slot — e.g. a standalone character's own top-level weapon options (Chaos
+ * Daemons' The Changeling has "The Trickster's Staff" and "Infernal Flames"
+ * as direct children, each a mandatory min=1/max=1 "selections" choice, the
+ * exact same constraint shape a real model slot like "Aspiring Champion"
+ * uses). Without this check, extractUnitSize counted each such weapon as
+ * its own model, computing The Changeling — a single-model character — as
+ * a 3-model unit. A real model slot carries its own "Unit" characteristics
+ * profile (M/T/Sv/W/Ld/OC); a pure weapon item never does.
+ */
+function isPureWeaponChild(node: any): boolean {
+  const profiles = ensureArray(node.profiles?.profile);
+  const hasWeapon = profiles.some(
+    (p: any) => p["@_typeId"] === RANGED_WEAPON_TYPE_ID || p["@_typeId"] === MELEE_WEAPON_TYPE_ID,
+  );
+  const hasUnitProfile = profiles.some((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID);
+  return hasWeapon && !hasUnitProfile;
+}
+
+/**
+ * Whether a child selectionEntry/selectionEntryGroup has any content of its
+ * own (inline sub-entries, sub-groups, or profiles) rather than being a
+ * pure entryLinks-only reference to shared content elsewhere — e.g. a
+ * character's "Crusade" group, which links out to the universal "Mighty
+ * Champions" narrative-play rules and has no inline content describing an
+ * actual model. Distinguishes a real (if unconstrained) model slot like
+ * "Terminator Champion" — which nests real inline weapon-option entries —
+ * from an unrelated rules/wargear-customization wrapper that happens to
+ * also lack an explicit count constraint.
+ */
+function hasOwnInlineContent(node: any): boolean {
+  return (
+    ensureArray(node.selectionEntries?.selectionEntry).length > 0 ||
+    ensureArray(node.selectionEntryGroups?.selectionEntryGroup).length > 0 ||
+    ensureArray(node.profiles?.profile).length > 0
+  );
+}
+
+/**
+ * Derive a unit's model-count range by summing the count contribution of
+ * each of its direct child selectionEntries/selectionEntryGroups — each
+ * represents one named model slot or troop-type block (e.g. a mandatory
+ * "Aspiring Champion" contributing exactly 1, plus a "4-9 Legionaries"
+ * group contributing 4-9, for a 5-10 total). A child with no explicit count
+ * constraint contributes exactly 1 if it has its own inline content (e.g. a
+ * champion's weapon-option wrapper group, representing a single mandatory
+ * model slot expressed via nested weapon choices rather than an explicit
+ * count) — but contributes nothing if it's a pure reference to shared
+ * content elsewhere (e.g. a "Crusade" rules group), since that isn't a
+ * model slot at all. Hidden children (background/bookkeeping constructs)
+ * are skipped entirely. A unit with no children at all (a vehicle or a
+ * single-model character with no loadout sub-entries) is exactly 1 model.
+ *
+ * A top-level entry whose own type is "model" (rather than "unit") IS
+ * itself one model — e.g. a named character or vehicle datasheet with no
+ * separate wrapping "unit" container, whose children are typically wargear
+ * or psychic-power choice groups rather than additional model slots — so it
+ * starts from a baseline of 1 before summing children. A "unit"-typed entry
+ * is a pure container whose entire count comes from its children (e.g.
+ * Legionaries: 0 baseline + "Aspiring Champion" (1) + "4-9 Legionaries"
+ * group = 5-10 total).
+ *
+ * Known limitation: a handful of units (e.g. Space Wolves' "Wolf Guard
+ * Headtakers") express their entire composition as entryLinks to shared
+ * library content rather than inline entries — hasOwnInlineContent can't
+ * see through that reference to know the link target is real troop data
+ * rather than an unrelated reference like a "Crusade" rules group, so such
+ * units compute to a bare 0 before the floor below applies. Properly
+ * resolving this would mean threading fetch-data.ts's global shared-entry
+ * index into this function; not done given how rare the pattern is.
+ * Falling back to exactly 1 is a deliberately conservative floor — never
+ * confidently assert a unit has 0 models, since every real unit has at
+ * least 1, even where the true composition (which may be larger) isn't
+ * recoverable here.
+ *
+ * `children` excludes pure-weapon items (see isPureWeaponChild) before any
+ * of the above runs — a standalone character's own top-level weapon
+ * options (e.g. Chaos Daemons' The Changeling, whose direct children are
+ * just "The Trickster's Staff" and "Infernal Flames") use the identical
+ * mandatory min=1/max=1 "selections" constraint shape a real model slot
+ * does, and without this exclusion each one was wrongly counted as its own
+ * model — a single-model character computed to a 3-model unit.
+ */
+function extractUnitSize(entry: any): UnitSize {
+  const children = [
+    ...ensureArray(entry.selectionEntries?.selectionEntry),
+    ...ensureArray(entry.selectionEntryGroups?.selectionEntryGroup),
+  ].filter((c: any) => c["@_hidden"] !== "true" && !isPureWeaponChild(c));
+
+  if (children.length === 0) return { min: 1, max: 1 };
+
+  const baseline = entry["@_type"] === "model" ? 1 : 0;
+  let totalMin = baseline;
+  let totalMax = baseline;
+  for (const child of children) {
+    const range = extractCountConstraint(child);
+    if (range) {
+      totalMin += range.min;
+      totalMax += range.max;
+    } else if (hasOwnInlineContent(child)) {
+      totalMin += 1;
+      totalMax += 1;
+    }
+  }
+  if (totalMax === 0) return { min: 1, max: 1 };
+  return { min: totalMin, max: totalMax };
 }
 
 // === Exported helpers for fetch-data.ts cross-catalogue resolution ===
@@ -225,11 +625,19 @@ export function parseEntryNode(
     meleeWeapons: extractMeleeWeapons(profiles),
     abilities: extractAbilities(profiles),
     points: extractPoints(entry),
+    unitSize: extractUnitSize(entry),
     gameSystem: "wh40k-10e" as const,
   };
 }
 
-export { extractFaction, collectAllProfiles, buildRuleIndex };
+export {
+  extractFaction,
+  collectAllProfiles,
+  buildRuleIndex,
+  buildProfileIndex,
+  extractUnitSize,
+  ruleLinksToAbilityProfiles,
+};
 
 // === Public API ===
 
@@ -490,12 +898,77 @@ export function parseCatalogue(xml: string): Unit[] {
         meleeWeapons: extractMeleeWeapons(allProfiles),
         abilities: extractAbilities(allProfiles),
         points: extractPoints(entry),
+        unitSize: extractUnitSize(entry),
         gameSystem: "wh40k-10e" as const,
       };
     });
 }
 
 // === Detachment & Enhancement extraction ===
+
+/**
+ * A detachment's "Detachment Points" cost (1-3), read the same way unit
+ * points are (a <cost> entry keyed by typeId). 11th Edition only — BSData's
+ * 10e catalogues never have this cost type at all, so this returns null for
+ * every 10e detachment.
+ */
+function extractDetachmentPoints(entry: any): number | null {
+  const costs = ensureArray(entry.costs?.cost);
+  const dpCost = costs.find((c: any) => c["@_typeId"] === DETACHMENT_POINTS_TYPE_ID);
+  if (!dpCost) return null;
+  return Number(dpCost["@_value"]);
+}
+
+/**
+ * Which Force Disposition(s) a detachment can select when mustering, read
+ * from its categoryLinks. BSData tags each detachment selectionEntry with
+ * one (occasionally two) of the five disposition names alongside other,
+ * unrelated categoryLinks — a "3DP Detachment" redundancy flag, and
+ * mutual-exclusion tags (see extractDetachmentRestrictionTags below) —
+ * filtered out here by only keeping names that match one of the five known
+ * values. 11th Edition only, same as extractDetachmentPoints above.
+ */
+function extractDetachmentDispositions(entry: any): Disposition[] {
+  const links = ensureArray(entry.categoryLinks?.categoryLink);
+  const names = links
+    .filter((cl: any) => cl["@_hidden"] !== "true")
+    .map((cl: any) => cl["@_name"] as string);
+  return KNOWN_DISPOSITIONS.filter((d) => names.includes(d));
+}
+
+/**
+ * A detachment's mutual-exclusion tag(s) (e.g. "Nightmare", "Doomed",
+ * "Grace", "Covens", "Kabal") — confirmed against BSData/wh40k-11e's own
+ * rule text, which spells this out explicitly on (at least) one member of
+ * each pair/group: "This detachment has the NIGHTMARE tag and cannot be
+ * taken with another NIGHTMARE detachment." (Chaos Space Marines'
+ * Murdertalon Raiders). These are just the categoryLinks left over once the
+ * five known dispositions and the "NDP Detachment" redundancy flag are
+ * removed — every other categoryLink checked on a detachment turned out to
+ * follow this same pattern, always appearing on exactly the other
+ * detachment(s) it's mutually exclusive with (Space Marines' "Doomed" is a
+ * rare 3-way group: The Lost Brethren/Rage-Cursed Onslaught/Wrath of the
+ * Doomed, no two of which can be combined).
+ *
+ * Gated on extractDetachmentPoints being non-null (i.e. this is a real
+ * 11e-tagged detachment) rather than trusting "not a known disposition" the
+ * way extractDetachmentDispositions can: 10e detachments have no Detachment
+ * Points concept at all but can still carry an unrelated, coincidental
+ * categoryLink (e.g. a stray "Grenades" tag was found on 10e's own "Gladius
+ * Task Force" entry) that would otherwise be wrongly reported as a
+ * restriction tag.
+ */
+function extractDetachmentRestrictionTags(entry: any): string[] {
+  if (extractDetachmentPoints(entry) === null) return [];
+
+  const links = ensureArray(entry.categoryLinks?.categoryLink);
+  const names = links
+    .filter((cl: any) => cl["@_hidden"] !== "true")
+    .map((cl: any) => cl["@_name"] as string)
+    .filter((name: string) => !KNOWN_DISPOSITIONS.includes(name as Disposition))
+    .filter((name: string) => !/^\dDP Detachment$/i.test(name));
+  return [...new Set(names)];
+}
 
 /**
  * Extract the detachment ability from a selectionEntry.
@@ -558,6 +1031,24 @@ function buildRuleIndex(catNode: any): Map<string, any> {
   for (const rule of [...directRules, ...sharedRules]) {
     if (rule["@_id"]) {
       index.set(rule["@_id"], rule);
+    }
+  }
+  return index;
+}
+
+/**
+ * Build an index of shared profiles from a catalogue (or game system) node,
+ * for resolving <infoLink type="profile"> — the profile-based counterpart to
+ * buildRuleIndex/<infoLink type="rule"> (see ruleLinksToAbilityProfiles).
+ * Profiles may be in <profiles>, <sharedProfiles>, or both.
+ */
+function buildProfileIndex(catNode: any): Map<string, any> {
+  const index = new Map<string, any>();
+  const directProfiles = ensureArray(catNode.profiles?.profile);
+  const sharedProfiles = ensureArray(catNode.sharedProfiles?.profile);
+  for (const profile of [...directProfiles, ...sharedProfiles]) {
+    if (profile["@_id"]) {
+      index.set(profile["@_id"], profile);
     }
   }
   return index;
@@ -673,6 +1164,9 @@ export function parseDetachments(
       name: entry["@_name"],
       faction,
       ability,
+      detachmentPoints: extractDetachmentPoints(entry),
+      dispositions: extractDetachmentDispositions(entry),
+      restrictionTags: extractDetachmentRestrictionTags(entry),
       gameSystem: "wh40k-10e" as const,
     });
   }
@@ -799,4 +1293,163 @@ export function parseEnhancements(
   }
 
   return enhancements;
+}
+
+// === Crusade Honours (BSData/wh40k-11e only) ===
+//
+// Every Crusade Battle Trait / Crusade Relic / Battle Scar entry in BSData
+// follows the exact same shape as an Enhancement: a selectionEntry with an
+// Abilities-typed profile whose "Description" characteristic holds the rule
+// text (see extractEnhancementDescription above, reused here unchanged).
+// What differs is where these entries live:
+//   - Generic (universal): gameSystem-level "Main Rules Battle Scars".
+//   - Faction-specific: a catalogue's own top-level shared group tagged
+//     `comment: "Crusade content"` (e.g. CSM's "Codex Battle Traits",
+//     "Codex Crusade Relics", "Chaos Boons").
+//   - Campaign-specific: gameSystem-level groups named "<Campaign> Battle
+//     Traits" / "<Campaign> Crusade Relics" (Tyrannic War, Pariah Nexus,
+//     Nachmund Gauntlet, Armageddon), reachable either nested under a
+//     generic wrapper group or as their own top-level shared group —
+//     BSData is inconsistent about which, so campaign groups are found by
+//     recursively walking every shared group's subgroups rather than
+//     assuming a fixed nesting depth.
+// Confirmed against BSData/wh40k-11e's "Warhammer 40,000.json" (game
+// system) and "Chaos - Chaos Space Marines.json" (catalogue) — see
+// docs/design/11e-support.md for the investigation notes.
+
+/** Relic pools are further split by tier; matches BSData's own subgroup names exactly. */
+const CRUSADE_RELIC_TIERS: readonly CrusadeRelicTier[] = ["Antiquity", "Legendary", "Artificer"];
+
+/**
+ * Recursively collect every selectionEntryGroup (at any nesting depth, not
+ * following entryLinks) under `roots` whose own name matches `pattern`.
+ * Used to find campaign-specific Battle Trait/Crusade Relic pools without
+ * assuming a fixed nesting depth (see comment above).
+ */
+function collectGroupsMatching(roots: any[], pattern: RegExp): any[] {
+  const results: any[] = [];
+  function walk(node: any): void {
+    const name: string = node["@_name"] ?? "";
+    if (pattern.test(name)) results.push(node);
+    for (const child of ensureArray(node.selectionEntryGroups?.selectionEntryGroup)) {
+      walk(child);
+    }
+  }
+  roots.forEach(walk);
+  return results;
+}
+
+/** Build CrusadeHonour records from a flat list of selectionEntry nodes. */
+function honoursFromEntries(
+  entries: any[],
+  category: CrusadeHonourCategory,
+  scope: CrusadeHonourScope,
+  faction: string | null,
+  campaign: string | null,
+  relicTier: CrusadeRelicTier | null,
+): CrusadeHonour[] {
+  const out: CrusadeHonour[] = [];
+  for (const entry of entries) {
+    if (entry["@_hidden"] === "true") continue;
+    const description = extractEnhancementDescription(entry);
+    if (!description) continue;
+    out.push({
+      id: entry["@_id"],
+      name: entry["@_name"],
+      description,
+      category,
+      scope,
+      faction,
+      campaign,
+      relicTier,
+      gameSystem: "wh40k-11e" as const,
+    });
+  }
+  return out;
+}
+
+/** Extract a relic pool's entries, splitting by its Antiquity/Legendary/Artificer tier subgroups. */
+function honoursFromRelicPool(
+  relicGroup: any,
+  scope: CrusadeHonourScope,
+  faction: string | null,
+  campaign: string | null,
+): CrusadeHonour[] {
+  const out: CrusadeHonour[] = [];
+  const tierGroups = ensureArray(relicGroup.selectionEntryGroups?.selectionEntryGroup);
+  for (const tierGroup of tierGroups) {
+    const tierName: string = tierGroup["@_name"] ?? "";
+    const tier = CRUSADE_RELIC_TIERS.find((t) => tierName.startsWith(t)) ?? null;
+    const entries = ensureArray(tierGroup.selectionEntries?.selectionEntry);
+    out.push(...honoursFromEntries(entries, "relic", scope, faction, campaign, tier));
+  }
+  return out;
+}
+
+/**
+ * Extract the generic (universal Battle Scars) and campaign-specific
+ * (Battle Traits + Crusade Relics per campaign) Crusade Honours from the
+ * game system file. Called once per game system, not per catalogue.
+ */
+export function parseGenericCrusadeHonours(gameSystemNode: any): CrusadeHonour[] {
+  const honours: CrusadeHonour[] = [];
+  const roots = ensureArray(gameSystemNode.sharedSelectionEntryGroups?.selectionEntryGroup);
+
+  // Generic: Main Rules Battle Scars — universal, no faction/campaign gating.
+  const battleScarGroups = collectGroupsMatching(roots, /^Main Rules Battle Scars$/i);
+  for (const group of battleScarGroups) {
+    const entries = ensureArray(group.selectionEntries?.selectionEntry);
+    honours.push(...honoursFromEntries(entries, "battleScar", "generic", null, null, null));
+  }
+
+  // Campaign: "<Campaign> Battle Traits" (excludes the bare "Battle Traits"
+  // wrapper and faction-specific "Codex Battle Traits", neither of which
+  // matches the required "<something> Battle Traits" prefix pattern).
+  const campaignTraitGroups = collectGroupsMatching(roots, /^(.+) Battle Traits$/i);
+  for (const group of campaignTraitGroups) {
+    const name: string = group["@_name"] ?? "";
+    const campaign = name.replace(/\s*Battle Traits\s*$/i, "").trim();
+    const entries = ensureArray(group.selectionEntries?.selectionEntry);
+    honours.push(...honoursFromEntries(entries, "battleTrait", "campaign", null, campaign, null));
+  }
+
+  // Campaign: "<Campaign> Crusade Relics" (excludes faction-specific "Codex Crusade Relics").
+  const campaignRelicGroups = collectGroupsMatching(roots, /^(.+) Crusade Relics$/i);
+  for (const group of campaignRelicGroups) {
+    const name: string = group["@_name"] ?? "";
+    const campaign = name.replace(/\s*Crusade Relics\s*$/i, "").trim();
+    honours.push(...honoursFromRelicPool(group, "campaign", null, campaign));
+  }
+
+  return honours;
+}
+
+/**
+ * Extract a catalogue's own faction-specific Crusade Honours: its Codex
+ * Battle Traits, Codex Crusade Relics, and any Boon-style table (e.g.
+ * Chaos Boons). Only considers the catalogue's own top-level shared groups
+ * tagged `comment: "Crusade content"` — BSData's own marker for this
+ * content, which avoids hardcoding "Codex" as if every faction used that
+ * exact wording.
+ */
+export function parseFactionCrusadeHonours(catNode: any, faction: string): CrusadeHonour[] {
+  const honours: CrusadeHonour[] = [];
+  const groups = ensureArray(catNode.sharedSelectionEntryGroups?.selectionEntryGroup);
+
+  for (const group of groups) {
+    if (group.comment !== "Crusade content") continue;
+    const name: string = group["@_name"] ?? "";
+
+    if (/Battle Traits$/i.test(name)) {
+      const entries = ensureArray(group.selectionEntries?.selectionEntry);
+      honours.push(...honoursFromEntries(entries, "battleTrait", "faction", faction, null, null));
+    } else if (/Crusade Relics$/i.test(name)) {
+      honours.push(...honoursFromRelicPool(group, "faction", faction, null));
+    } else if (/Boons?$/i.test(name)) {
+      const entries = ensureArray(group.selectionEntries?.selectionEntry);
+      honours.push(...honoursFromEntries(entries, "boon", "faction", faction, null, null));
+    }
+  }
+
+  return honours;
 }

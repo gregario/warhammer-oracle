@@ -10,14 +10,17 @@
   <a href="https://github.com/gregario/warhammer-oracle/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT Licence"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js 18+"></a>
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-compatible-purple.svg" alt="MCP Compatible"></a>
+  <a href="https://github.com/sponsors/gregario"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa.svg" alt="Sponsor"></a>
   <a href="https://glama.ai/mcp/servers/gregario/warhammer-oracle"><img src="https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/score.svg" alt="warhammer-oracle MCP server"></a>
 </p>
 
 ---
 
-Ask your AI assistant about datasheets, stratagems, detachments, enhancements, keywords, phase sequences, wound math, and more. Covers Warhammer 40,000, Combat Patrol, and Kill Team.
+Ask your AI assistant about datasheets, stratagems, detachments, enhancements, keywords, phase sequences, wound math, and more. Covers Warhammer 40,000 (10th and 11th Edition), Combat Patrol, and Kill Team.
 
 [![warhammer-oracle MCP server](https://glama.ai/mcp/servers/gregario/warhammer-oracle/badges/card.svg)](https://glama.ai/mcp/servers/gregario/warhammer-oracle)
+
+**Editions:** 40K unit/detachment/enhancement lookups default to **11th Edition**. Pass `game_mode: "40k_10e"` to any tool for 10th Edition data instead — 10th Edition support isn't going away. Turn sequences/phases, core keywords, and Core Stratagems are hand-curated from the 11th Edition Core Rules. Detachment-specific stratagems are hand-curated per faction, layered the same way the tabletop rules are layered: an 11th Edition Faction Pack detachment overrides the base Codex where the pack details it in full, and the unrevised Codex baseline applies everywhere else.
 
 ## Installation
 
@@ -58,14 +61,14 @@ claude mcp add warhammer-oracle -- npx -y warhammer-oracle
 
 ### `lookup_unit`
 
-Look up a unit datasheet by name. Returns stat profiles, ranged and melee weapons, abilities, and keywords.
+Look up a unit datasheet by name. Returns stat profiles, unit size (model count), ranged and melee weapons, abilities, and keywords.
 
 ```
 "Look up the Intercessor Squad datasheet"
 "What are the stats for a Leman Russ Battle Tank?"
 ```
 
-**Parameters:** `unit_name` (required), `faction` (optional), `game_mode` (optional: `40k`, `combat_patrol`, `kill_team`)
+**Parameters:** `unit_name` (required), `faction` (optional), `game_mode` (optional: `40k`/`40k_11e` (default, 11th Edition), `40k_10e`, `combat_patrol`, `kill_team`)
 
 ### `lookup_keyword`
 
@@ -91,14 +94,15 @@ Look up a game phase by name. Returns step-by-step instructions and tips.
 
 ### `search_units`
 
-Search units by name, faction, or keywords. Returns a compact list (max 10 results) with faction, points, and keywords.
+Search units by name, faction, keywords, or ability text. Returns a compact list (max 10 results) with faction, points, and keywords.
 
 ```
 "Find all Necron units under 100 points"
 "Search for units with the Fly keyword"
+"Show me units with Deep Strike"
 ```
 
-**Parameters:** `query` (required), `faction` (optional), `max_points` (optional), `game_mode` (optional)
+**Parameters:** `query` (required), `faction` (optional), `ability` (optional), `max_points` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`, `combat_patrol`, `kill_team`)
 
 ### `compare_units`
 
@@ -109,7 +113,7 @@ Compare 2-4 units side by side. Shows full datasheets for each unit in a single 
 "Compare the Leman Russ, Predator, and Hammerhead side by side"
 ```
 
-**Parameters:** `units` (required, array of 2-4 unit names)
+**Parameters:** `units` (required, array of 2-4 unit names), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`, `combat_patrol`, `kill_team`)
 
 ### `game_flow`
 
@@ -154,7 +158,7 @@ Look up a detachment by name. Returns the detachment ability, available enhancem
 "What does the Warhost detachment do for Aeldari?"
 ```
 
-**Parameters:** `name` (required), `faction` (optional)
+**Parameters:** `name` (required), `faction` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`)
 
 ### `lookup_enhancement`
 
@@ -165,7 +169,7 @@ Look up a character enhancement by name. Returns points cost, detachment, and ef
 "Show me Aeldari enhancements"
 ```
 
-**Parameters:** `name` (required), `faction` (optional), `detachment` (optional)
+**Parameters:** `name` (required), `faction` (optional), `detachment` (optional), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`)
 
 ### `lookup_ploy`
 
@@ -189,27 +193,55 @@ Calculate expected damage output for an attack profile against a target. Handles
 
 **Parameters:** `attacks`, `hit_skill`, `strength`, `toughness`, `armour_save`, `damage` (all required); `armour_penetration`, `invulnerable_save`, `feel_no_pain`, `reroll_hits`, `reroll_wounds`, `weapon_keywords`, `wounds_per_model`, `game_mode` (all optional)
 
+### `determine_primary_mission`
+
+Determine each player's Primary Mission from their Force Dispositions (11th Edition Matched Play). Each player's mission is looked up from their *opponent's* Force Disposition — in a non-mirror matchup, the two players get different missions. Returns mission names only, not full scoring/objective text.
+
+```
+"I picked Take and Hold, my opponent picked Purge the Foe — what are our missions?"
+"What's my Primary Mission if I'm Reconnaissance and they're Priority Assets?"
+```
+
+**Parameters:** `your_disposition`, `opponent_disposition` (both required, one of: `Take and Hold`, `Purge the Foe`, `Reconnaissance`, `Priority Assets`, `Disruption`)
+
+### `lookup_crusade`
+
+Look up Crusade content (narrative play). Returns Crusade rules, relics, battle traits, and upgrades.
+
+```
+"What Crusade relics can Space Marines take?"
+"Show me the Crusade battle traits"
+```
+
+**Parameters:** `query` (required), `faction` (optional)
+
 ## Data
 
-All data is embedded at build time — no network calls at runtime.
+All data is embedded at build time — no network calls at runtime. Data is synced daily from BSData via GitHub Actions.
 
 | Category | Count | Source |
 |---|---|---|
-| 40K unit datasheets | 2,642 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e) |
-| Kill Team operatives | 506 | [BSData/wh40k-killteam](https://github.com/BSData/wh40k-killteam) |
-| Detachments | 991 | BSData (auto-extracted) |
-| Enhancements | 3,908 | BSData (auto-extracted) |
-| Stratagems | 17 | Hand-curated (core + examples) |
+| 40K unit datasheets (11th Edition, default) | 2,695 | [BSData/wh40k-11e](https://github.com/BSData/wh40k-11e) |
+| 40K unit datasheets (10th Edition) | 2,666 | [BSData/wh40k-10e](https://github.com/BSData/wh40k-10e) |
+| Kill Team operatives | 519 | [BSData/wh40k-killteam](https://github.com/BSData/wh40k-killteam) |
+| Detachments (11th / 10th Edition) | 259 / 208 | BSData (auto-extracted) |
+| Enhancements (11th / 10th Edition) | 895 / 827 | BSData (auto-extracted) |
+| Stratagems | 1,316 | Hand-curated (Core Rules + detachment-specific per faction) |
 | Kill Team ploys | 14 | Hand-curated (universal + popular factions) |
-| Shared rules | 33 (40K) + 22 (KT) | BSData |
-| Curated keywords | 25 | Hand-written, plain English |
+| Shared rules (11th / 10th Edition) | 35 / 33 | BSData |
+| Shared rules (Kill Team) | 22 | BSData |
+| Curated keywords | 25 | Hand-written, plain English, 11th Edition Core Rules |
 | Game mode sequences | 3 | Hand-curated (40K, Combat Patrol, Kill Team) |
+| Force Disposition mission matchups | 15 | Hand-curated (5 dispositions, full grid) |
 
 ### Game modes
 
-- **Warhammer 40,000** (40k) — full-scale battles
-- **Combat Patrol** (combat_patrol) — smaller, starter-friendly format
-- **Kill Team** (kill_team) — squad-level skirmish game
+- **Warhammer 40,000** (`40k` / `40k_11e`, default) — full-scale battles, 11th Edition rules
+- **Warhammer 40,000, 10th Edition** (`40k_10e`) — full-scale battles, 10th Edition rules (permanently supported)
+- **Combat Patrol** (`combat_patrol`) — smaller, starter-friendly format
+- **Kill Team** (`kill_team`) — squad-level skirmish game
+
+10th Edition support isn't going away when a newer edition is added — every `game_mode` value, once added, keeps working.
 
 ## Development
 
@@ -230,4 +262,4 @@ npm run build
 
 MIT (for the MCP server code).
 
-Unit data sourced from the [BSData](https://github.com/BSData/wh40k-10e) community project. Game rules and army rules are the intellectual property of Games Workshop. This tool provides reference data for personal use during gameplay.
+Unit data sourced from the [BSData](https://github.com/BSData) community project — [wh40k-10e](https://github.com/BSData/wh40k-10e), [wh40k-11e](https://github.com/BSData/wh40k-11e), and [wh40k-killteam](https://github.com/BSData/wh40k-killteam). Game rules and army rules are the intellectual property of Games Workshop. This tool provides reference data for personal use during gameplay.

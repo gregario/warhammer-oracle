@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { UNITS } from "../data/units.js";
+import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
+import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type { Unit, KillTeamOperative } from "../types.js";
 
 const MAX_RESULTS = 10;
@@ -10,7 +12,7 @@ const MAX_RESULTS = 10;
 function formatCompactUnit(unit: Unit): string {
   const pointsStr = unit.points !== null ? `${unit.points}pts` : "pts N/A";
   const keywords = unit.keywords.length > 0 ? unit.keywords.join(", ") : "None";
-  return `**${unit.name}** (${unit.faction}) — ${pointsStr} — Keywords: ${keywords}`;
+  return `**${unit.name}** (${unit.faction}) — ${pointsStr} — ${formatUnitSize(unit.unitSize)} — Keywords: ${keywords}`;
 }
 
 function formatCompactOperative(op: KillTeamOperative): string {
@@ -22,35 +24,61 @@ function formatCompactOperative(op: KillTeamOperative): string {
 export function registerSearchUnits(server: McpServer): void {
   server.tool(
     "search_units",
-    "Search Warhammer 40K units or Kill Team operatives by name, faction, or keywords. Returns a compact list of matching results (max 10).",
+    "Search Warhammer 40K units or Kill Team operatives by name, faction, keywords, or ability text. Returns a compact list of matching results (max 10).",
     {
-      query: z.string().describe("Search query — matches against name, faction, and keywords"),
+      query: z
+        .string()
+        .describe("Search query — matches against name, faction, keywords, and ability names/text"),
       faction: z
         .string()
         .optional()
-        .describe("Optional faction filter to narrow results (e.g. 'Necrons', 'Aeldari')"),
+        .describe(
+          "Optional faction filter to narrow results (e.g. 'Necrons', 'Aeldari'). Also matches keywords, " +
+            "so sub-forces folded into a parent faction's data (e.g. 'Kroot', which BSData files under " +
+            "'T'au Empire' rather than as its own faction) are still found.",
+        ),
+      ability: z
+        .string()
+        .optional()
+        .describe(
+          "Optional filter for units/operatives that have an ability whose name or rules text matches this " +
+            "(e.g. 'devastating wounds', 'stealth', 'deep strike'). Kill Team results also match unique actions.",
+        ),
       max_points: z
         .number()
         .optional()
         .describe("Optional max points filter — only return units costing this many points or fewer (40K only)"),
       game_mode: z
-        .enum(["40k", "combat_patrol", "kill_team"])
+        .enum(["40k", "40k_10e", "40k_11e", "combat_patrol", "kill_team"])
         .optional()
-        .describe("Game mode: '40k' (default) searches 40K units, 'kill_team' searches Kill Team operatives"),
+        .describe(
+          "Game mode/edition: defaults to '40k_11e'. Pass '40k_10e' for 10th Edition units, " +
+            "'40k'/'40k_11e' for 11th Edition (current default), or 'kill_team' for Kill Team operatives.",
+        ),
     },
-    async ({ query, faction, max_points, game_mode }) => {
+    async ({ query, faction, ability, max_points, game_mode }) => {
       if (game_mode === "kill_team") {
         let candidates: KillTeamOperative[] = [...KILL_TEAM_OPERATIVES];
 
         if (faction) {
-          candidates = fuzzySearch(candidates, faction, ["faction"]);
+          candidates = fuzzySearch(candidates, faction, ["faction", "keywords"]);
+        }
+        if (ability) {
+          candidates = fuzzySearch(candidates, ability, ["abilities", "uniqueActions"]);
         }
 
-        let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords"]);
+        let matches = fuzzySearch(candidates, query, [
+          "name",
+          "faction",
+          "keywords",
+          "abilities",
+          "uniqueActions",
+        ]);
 
         if (matches.length === 0) {
           const filters: string[] = [];
           if (faction) filters.push(`faction: "${faction}"`);
+          if (ability) filters.push(`ability: "${ability}"`);
           const filterStr = filters.length > 0 ? ` (filters: ${filters.join(", ")})` : "";
           return {
             content: [
@@ -74,20 +102,24 @@ export function registerSearchUnits(server: McpServer): void {
           content: [
             {
               type: "text" as const,
-              text: lines.join("\n"),
+              text: `${formatModeStamp("wh40k-killteam")}\n\n${lines.join("\n")}`,
             },
           ],
         };
       }
 
-      // Default: 40K units
-      let candidates: Unit[] = [...UNITS];
+      // Default: 40K units (11th Edition unless 10th Edition is explicitly requested)
+      const gameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
+      let candidates: Unit[] = [...(gameSystem === "wh40k-10e" ? UNITS : UNITS_11E)];
 
       if (faction) {
-        candidates = fuzzySearch(candidates, faction, ["faction"]);
+        candidates = fuzzySearch(candidates, faction, ["faction", "keywords"]);
+      }
+      if (ability) {
+        candidates = fuzzySearch(candidates, ability, ["abilities"]);
       }
 
-      let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords"]);
+      let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords", "abilities"]);
 
       if (max_points !== undefined) {
         matches = matches.filter(
@@ -98,6 +130,7 @@ export function registerSearchUnits(server: McpServer): void {
       if (matches.length === 0) {
         const filters: string[] = [];
         if (faction) filters.push(`faction: "${faction}"`);
+        if (ability) filters.push(`ability: "${ability}"`);
         if (max_points !== undefined) filters.push(`max points: ${max_points}`);
         const filterStr = filters.length > 0 ? ` (filters: ${filters.join(", ")})` : "";
         return {
@@ -122,7 +155,7 @@ export function registerSearchUnits(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: lines.join("\n"),
+            text: `${formatModeStamp(gameSystem)}\n\n${lines.join("\n")}`,
           },
         ],
       };

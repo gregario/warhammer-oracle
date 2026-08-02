@@ -55,4 +55,22 @@ describe("lookup_enhancement", () => {
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("No enhancement found");
   });
+
+  it("defaults to 11th Edition data", async () => {
+    const result = await client.callTool({
+      name: "lookup_enhancement",
+      arguments: { name: "Guiding Presence" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 11e]");
+  });
+
+  it("returns 10th Edition data when game_mode is pinned to 40k_10e", async () => {
+    const result = await client.callTool({
+      name: "lookup_enhancement",
+      arguments: { name: "Guiding Presence", game_mode: "40k_10e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: 40k 10e]");
+  });
 });

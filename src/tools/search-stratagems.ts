@@ -57,7 +57,8 @@ export function registerSearchStratagems(server: McpServer): void {
         };
       }
 
-      const header = "**Game:** Warhammer 40,000\n\n";
+      const header =
+        "**Game:** Warhammer 40,000\n\n> Core stratagems reflect the 11th Edition Core Rules. Detachment-specific stratagems reflect 11th Edition faction packs where available (currently Space Marines, Chaos Space Marines) — other factions may still be on 10th Edition Codexes or missing entirely.\n\n";
       const lines = limited.map(formatCompact);
       const footer =
         matches.length > 10

@@ -1,7 +1,7 @@
 {
   "name": "warhammer-oracle",
-  "version": "0.2.41",
-  "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server",
+  "version": "0.2.39",
+  "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server — 10th and 11th Edition, Combat Patrol, Kill Team",
   "mcpName": "io.github.gregario/warhammer-oracle",
   "repository": {
     "type": "git",
@@ -9,7 +9,7 @@
   },
   "type": "module",
   "bin": {
-    "warhammer-oracle": "dist/index.js"
+    "warhammer-oracle-11e": "dist/index.js"
   },
   "files": [
     "dist",
@@ -17,7 +17,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod 755 dist/index.js",
+    "build": "tsc && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
+    "prepare": "npm run build",
     "dev": "tsx src/index.ts",
     "lint": "tsc --noEmit",
     "test": "vitest run",
