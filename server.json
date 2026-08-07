@@ -6,12 +6,12 @@
     "url": "https://github.com/gregario/warhammer-oracle",
     "source": "github"
   },
-  "version": "0.2.45",
+  "version": "0.2.46",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "warhammer-oracle",
-      "version": "0.2.45",
+      "version": "0.2.46",
       "transport": {
         "type": "stdio"
       }
