@@ -1,6 +1,6 @@
 {
   "name": "warhammer-oracle",
-  "version": "0.2.47",
+  "version": "0.2.48",
   "description": "Warhammer 40K and Kill Team rules, stats, and game flow MCP server — 10th and 11th Edition, Combat Patrol, Kill Team",
   "mcpName": "io.github.gregario/warhammer-oracle",
   "repository": {
