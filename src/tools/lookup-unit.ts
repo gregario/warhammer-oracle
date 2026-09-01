@@ -4,7 +4,7 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
-import { rankUnitMatches } from "../lib/unit-match.js";
+import { rankUnitMatches, ambiguousFactionMatches } from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
@@ -175,6 +175,17 @@ function ktStatLine(op: KillTeamOperative): string {
   return [p.apl, p.movement, p.save, p.wounds].join("/");
 }
 
+function formatFactionDisambiguation(
+  name: string,
+  options: { name: string; faction: string }[],
+): string {
+  const list = options.map((o) => `- **${o.name}** (${o.faction})`).join("\n");
+  return (
+    `"${name}" is more than one datasheet with different stats, depending on faction. ` +
+    `Re-run \`lookup_unit\` with the \`faction\` argument set to one of:\n\n${list}`
+  );
+}
+
 // === Tool Registration ===
 
 export function registerLookupUnit(server: McpServer): void {
@@ -219,6 +230,15 @@ export function registerLookupUnit(server: McpServer): void {
           };
         }
 
+        const ktAmbiguous = ambiguousFactionMatches(matches, unit_name, ktStatLine);
+        if (ktAmbiguous) {
+          return {
+            content: [
+              { type: "text" as const, text: formatFactionDisambiguation(matches[0].name, ktAmbiguous) },
+            ],
+          };
+        }
+
         return {
           content: [
             {
@@ -249,6 +269,15 @@ export function registerLookupUnit(server: McpServer): void {
               type: "text" as const,
               text: `No unit found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}\n\n${suggestion}`,
             },
+          ],
+        };
+      }
+
+      const ambiguous = ambiguousFactionMatches(matches, unit_name, unitStatLine);
+      if (ambiguous) {
+        return {
+          content: [
+            { type: "text" as const, text: formatFactionDisambiguation(matches[0].name, ambiguous) },
           ],
         };
       }
