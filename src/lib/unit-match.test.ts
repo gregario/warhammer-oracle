@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCanonicalFaction, rankUnitMatches } from "./unit-match.js";
+import { ambiguousFactionMatches, isCanonicalFaction, rankUnitMatches } from "./unit-match.js";
 
 // Trimmed-down stand-ins for `Unit` — rankUnitMatches only reads name/faction/keywords.
 const lemanRussAM = {
@@ -135,5 +135,71 @@ describe("rankUnitMatches", () => {
     const out = rankUnitMatches([gscImport, canonical], "Leman Russ Battle Tank", (u) => u.m);
     expect(out).toHaveLength(1);
     expect(out[0].faction).toBe("Astra Militarum");
+  });
+});
+
+describe("ambiguousFactionMatches", () => {
+  const statOf = (u: { stat: string }) => u.stat;
+  const helb = (faction: string, move: string, canonical = false) => ({
+    name: "Helbrute",
+    faction,
+    keywords: canonical ? ["Heretic Astartes", faction] : ["Heretic Astartes", "Chaos"],
+    stat: `M${move} T9 Sv2+ W8`,
+  });
+
+  it("flags a near-exact query whose stat line differs by faction", () => {
+    const units = [
+      helb("Chaos Space Marines", '6"'),
+      helb("Death Guard", '7"', true),
+      helb("World Eaters", '9"', true),
+    ];
+    const matches = rankUnitMatches(units, "Helbrute", statOf);
+    const tie = ambiguousFactionMatches(matches, "Helbrute", statOf);
+    expect(tie?.map((u) => u.faction)).toEqual([
+      "Chaos Space Marines",
+      "Death Guard",
+      "World Eaters",
+    ]);
+  });
+
+  it("returns one representative per distinct stat line, not per faction", () => {
+    const units = [
+      helb("Chaos Space Marines", '6"'),
+      helb("Chaos Daemons", '6"'),
+      helb("Chaos Knights", '6"'),
+      helb("World Eaters", '9"', true),
+    ];
+    const matches = rankUnitMatches(units, "Helbrute", statOf);
+    const tie = ambiguousFactionMatches(matches, "Helbrute", statOf);
+    expect(tie).toHaveLength(2);
+  });
+
+  it("does NOT flag same-name imports that share a stat line", () => {
+    const units = [
+      { name: "Chaos Lord", faction: "Chaos Daemons", keywords: ["Chaos"], stat: "same" },
+      { name: "Chaos Lord", faction: "Chaos Space Marines", keywords: ["Chaos"], stat: "same" },
+      { name: "Chaos Lord", faction: "Chaos Knights", keywords: ["Chaos"], stat: "same" },
+    ];
+    const matches = rankUnitMatches(units, "Chaos Lord", statOf);
+    expect(ambiguousFactionMatches(matches, "Chaos Lord", statOf)).toBeNull();
+  });
+
+  it("does not flag once the import trim already resolved it", () => {
+    const units = [
+      { name: "Leman Russ Battle Tank", faction: "Genestealer Cults", keywords: ["Astra Militarum"], stat: "x" },
+      { name: "Leman Russ Battle Tank", faction: "Astra Militarum", keywords: ["Astra Militarum"], stat: "x" },
+    ];
+    const matches = rankUnitMatches(units, "Leman Russ Battle Tank", statOf);
+    expect(ambiguousFactionMatches(matches, "Leman Russ Battle Tank", statOf)).toBeNull();
+  });
+
+  it("does not flag a loose/partial query", () => {
+    const units = [helb("World Eaters", '9"', true), helb("Death Guard", '7"', true)];
+    const matches = rankUnitMatches(units, "Helb", statOf);
+    expect(ambiguousFactionMatches(matches, "Helb", statOf)).toBeNull();
+  });
+
+  it("does not flag a single match", () => {
+    expect(ambiguousFactionMatches([helb("World Eaters", '9"', true)], "Helbrute", statOf)).toBeNull();
   });
 });

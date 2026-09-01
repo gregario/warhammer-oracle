@@ -75,3 +75,44 @@ export function rankUnitMatches<T extends NamedFactioned>(
   }
   return out;
 }
+
+/**
+ * Given the output of `rankUnitMatches`, is the leading result still a genuine
+ * cross-faction ambiguity — one datasheet name that is several *different*
+ * datasheets, one stat line per faction (or group of factions), with none
+ * singled out by the import trim? If so, `lookup_unit` should say which
+ * factions exist and ask for one rather than silently pick a stat line. This
+ * mirrors the disambiguation `lookup_stratagem` already does for name
+ * collisions.
+ *
+ * Only a near-exact query is disambiguated — a loose/partial match resolving
+ * to its best guess is expected behaviour. Same-name imports that share a stat
+ * line (the Chaos triad's shared datasheets, a unit fielded identically by
+ * many Space Marine chapters) are not flagged: any copy gives the same answer.
+ *
+ * Returns one representative entry per distinct stat line (stable order), or
+ * `null` when there is nothing to disambiguate.
+ */
+export function ambiguousFactionMatches<T extends NamedFactioned>(
+  matches: T[],
+  query: string,
+  statOf: (item: T) => string,
+): T[] | null {
+  if (matches.length < 2) return null;
+  if ((rankByName([matches[0]], query, (u) => u.name)[0]?.score ?? 0) < 0.9) return null;
+
+  const topName = normalizeName(matches[0].name);
+  const seenFactions = new Set<string>();
+  const byStatLine = new Map<string, T>();
+  for (const m of matches) {
+    if (normalizeName(m.name) !== topName) continue;
+    const faction = normalizeName(m.faction);
+    if (seenFactions.has(faction)) continue;
+    seenFactions.add(faction);
+    const stat = statOf(m);
+    if (!byStatLine.has(stat)) byStatLine.set(stat, m);
+  }
+  if (seenFactions.size < 2 || byStatLine.size < 2) return null;
+
+  return [...byStatLine.values()];
+}
