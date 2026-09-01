@@ -3,11 +3,34 @@ import { z } from "zod";
 import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
-import { fuzzySearch } from "../lib/search.js";
+import { fuzzySearch, scoreName } from "../lib/search.js";
+import { isCanonicalFaction } from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type { Unit, KillTeamOperative } from "../types.js";
 
 const MAX_RESULTS = 10;
+
+/**
+ * Order matches so the closest name matches come first (exact > prefix >
+ * token subset > substring); among an equal name score prefer the entry whose
+ * catalogue is its own faction (so the Astra Militarum "Leman Russ Battle
+ * Tank" outranks the Genestealer Cults import), then fall back to fuzzySearch
+ * order. Rows that only matched on faction/keyword/ability text are kept.
+ */
+function byNameRelevance<T extends { name: string; faction: string; keywords: string[] }>(
+  items: T[],
+  query: string,
+): T[] {
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      score: scoreName(query, item.name),
+      canonical: isCanonicalFaction(item) ? 0 : 1,
+    }))
+    .sort((a, b) => b.score - a.score || a.canonical - b.canonical || a.index - b.index)
+    .map((r) => r.item);
+}
 
 function formatCompactUnit(unit: Unit): string {
   const pointsStr = unit.points !== null ? `${unit.points}pts` : "pts N/A";
@@ -67,13 +90,16 @@ export function registerSearchUnits(server: McpServer): void {
           candidates = fuzzySearch(candidates, ability, ["abilities", "uniqueActions"]);
         }
 
-        let matches = fuzzySearch(candidates, query, [
-          "name",
-          "faction",
-          "keywords",
-          "abilities",
-          "uniqueActions",
-        ]);
+        let matches = byNameRelevance(
+          fuzzySearch(candidates, query, [
+            "name",
+            "faction",
+            "keywords",
+            "abilities",
+            "uniqueActions",
+          ]),
+          query,
+        );
 
         if (matches.length === 0) {
           const filters: string[] = [];
@@ -119,7 +145,10 @@ export function registerSearchUnits(server: McpServer): void {
         candidates = fuzzySearch(candidates, ability, ["abilities"]);
       }
 
-      let matches = fuzzySearch(candidates, query, ["name", "faction", "keywords", "abilities"]);
+      let matches = byNameRelevance(
+        fuzzySearch(candidates, query, ["name", "faction", "keywords", "abilities"]),
+        query,
+      );
 
       if (max_points !== undefined) {
         matches = matches.filter(
