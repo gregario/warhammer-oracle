@@ -13,6 +13,7 @@ import {
   extractUnitSize,
   collectAllProfiles,
   buildProfileIndex,
+  withLinkedUnitProfile,
   xmlParser,
 } from "./xml-parser.js";
 
@@ -1229,5 +1230,172 @@ describe("parseKillTeamGameSystem", () => {
     expect(result.rules).toHaveLength(2);
     expect(result.rules.map((r) => r.name)).toContain("Normal Move");
     expect(result.rules.map((r) => r.name)).toContain("Dash");
+  });
+});
+
+describe("withLinkedUnitProfile: <infoLink type=\"profile\"> to a shared Unit stat line", () => {
+  // Mirrors BSData/wh40k-11e's Kabalite Warriors: the datasheet's Unit profile
+  // is a top-level sharedProfiles entry, reached via <infoLink type="profile">
+  // nested on each weapon-loadout model sub-entry (once per variant, same
+  // targetId). The sibling "Ynnari" copy has a different Movement — resolution
+  // must go strictly by the targetId the datasheet gives.
+  const FIXTURE_LINKED_UNIT_PROFILE = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<catalogue id="cat-drukhari" name="Aeldari - Drukhari" xmlns="http://www.battlescribe.net/schema/catalogueSchema">
+  <sharedProfiles>
+    <profile id="kab-drukhari" name="Kabalite Warriors" hidden="false" typeId="c547-1836-d8a-ff4f" typeName="Unit">
+      <characteristics>
+        <characteristic name="M" typeId="e703-ecb6-5ce7-aec1">7"</characteristic>
+        <characteristic name="T" typeId="d29d-cf75-fc2d-34a4">3</characteristic>
+        <characteristic name="Sv" typeId="450a-a17e-9d5e-29da">4+</characteristic>
+        <characteristic name="W" typeId="750a-a2ec-90d3-21fe">1</characteristic>
+        <characteristic name="LD" typeId="58d2-b879-49c7-43bc">7+</characteristic>
+        <characteristic name="OC" typeId="bef7-942a-1a23-59f8">2</characteristic>
+      </characteristics>
+    </profile>
+    <profile id="kab-ynnari" name="Kabalite Warriors" hidden="false" typeId="c547-1836-d8a-ff4f" typeName="Unit">
+      <characteristics>
+        <characteristic name="M" typeId="e703-ecb6-5ce7-aec1">8"</characteristic>
+        <characteristic name="T" typeId="d29d-cf75-fc2d-34a4">3</characteristic>
+        <characteristic name="Sv" typeId="450a-a17e-9d5e-29da">4+</characteristic>
+        <characteristic name="W" typeId="750a-a2ec-90d3-21fe">1</characteristic>
+        <characteristic name="LD" typeId="58d2-b879-49c7-43bc">6+</characteristic>
+        <characteristic name="OC" typeId="bef7-942a-1a23-59f8">2</characteristic>
+      </characteristics>
+    </profile>
+    <profile id="dmg-tier" name="Damaged: 1-4 Wounds Remaining" hidden="false" typeId="9cc3-6d83-4dd3-9b64" typeName="Abilities">
+      <characteristics>
+        <characteristic name="Description">While this model has 1-4 wounds remaining, subtract 1 from its Objective Control.</characteristic>
+      </characteristics>
+    </profile>
+  </sharedProfiles>
+  <sharedSelectionEntries>
+    <selectionEntry id="unit-kabalites" name="Kabalite Warriors" type="unit" hidden="false">
+      <profiles>
+        <profile id="ab-1" name="Power From Pain" typeId="9cc3-6d83-4dd3-9b64">
+          <characteristics><characteristic name="Description">Some ability.</characteristic></characteristics>
+        </profile>
+      </profiles>
+      <selectionEntryGroups>
+        <selectionEntryGroup id="g-body" name="4-9 Kabalite Warriors" hidden="false">
+          <selectionEntries>
+            <selectionEntry id="m-shredder" name="Kabalite Warrior with Shredder" type="model" hidden="false">
+              <infoLinks>
+                <infoLink id="il-1" name="Kabalite Warriors" hidden="false" targetId="kab-drukhari" type="profile"/>
+              </infoLinks>
+            </selectionEntry>
+            <selectionEntry id="m-blaster" name="Kabalite Warrior with Blaster" type="model" hidden="false">
+              <infoLinks>
+                <infoLink id="il-2" name="Kabalite Warriors" hidden="false" targetId="kab-drukhari" type="profile"/>
+              </infoLinks>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntryGroup>
+        <selectionEntryGroup id="g-sybarite" name="Sybarite" hidden="false">
+          <selectionEntries>
+            <selectionEntry id="m-sybarite" name="Sybarite" type="model" hidden="false">
+              <infoLinks>
+                <infoLink id="il-3" name="Kabalite Warriors" hidden="false" targetId="kab-drukhari" type="profile"/>
+                <infoLink id="il-4" name="Damaged" hidden="false" targetId="dmg-tier" type="profile"/>
+              </infoLinks>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntryGroup>
+      </selectionEntryGroups>
+    </selectionEntry>
+  </sharedSelectionEntries>
+</catalogue>`;
+
+  function parse() {
+    const parsed = xmlParser.parse(FIXTURE_LINKED_UNIT_PROFILE);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[0];
+    return { entry, profileIndex };
+  }
+
+  it("resolves the linked Unit profile into a single stat row (deduped across model variants)", () => {
+    const { entry, profileIndex } = parse();
+    const profiles = withLinkedUnitProfile(entry, collectAllProfiles(entry, new Map(), profileIndex), profileIndex);
+    const unit = parseEntryNode(entry, "Drukhari", profiles);
+
+    expect(unit!.profiles).toHaveLength(1);
+    expect(unit!.profiles[0]).toMatchObject({
+      name: "Kabalite Warriors",
+      movement: '7"',
+      toughness: "3",
+      save: "4+",
+      wounds: "1",
+      leadership: "7+",
+      objectiveControl: "2",
+    });
+  });
+
+  it("resolves strictly by targetId — the same-named 'Ynnari' variant (M 8\") is not substituted", () => {
+    const { entry, profileIndex } = parse();
+    const profiles = withLinkedUnitProfile(entry, collectAllProfiles(entry, new Map(), profileIndex), profileIndex);
+    const unit = parseEntryNode(entry, "Drukhari", profiles);
+
+    expect(unit!.profiles[0].movement).toBe('7"');
+  });
+
+  it("does not surface a Damaged: X Wounds Remaining tier (Abilities-typed) as a stat row", () => {
+    const { entry, profileIndex } = parse();
+    const profiles = withLinkedUnitProfile(entry, collectAllProfiles(entry, new Map(), profileIndex), profileIndex);
+    const unit = parseEntryNode(entry, "Drukhari", profiles);
+
+    expect(unit!.profiles.every((p) => !/Damaged/.test(p.name))).toBe(true);
+  });
+
+  it("is a no-op when an inline Unit profile was already collected (no duplicate stat row)", () => {
+    const parsed = xmlParser.parse(FIXTURE_LINKED_UNIT_PROFILE);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[0];
+    // Splice an inline Unit profile onto the unit entry.
+    entry.profiles.profile.push({
+      "@_id": "inline-1",
+      "@_name": "Kabalite Warriors",
+      "@_typeId": "c547-1836-d8a-ff4f",
+      characteristics: { characteristic: [{ "@_name": "M", "#text": '6"' }] },
+    });
+
+    const profiles = withLinkedUnitProfile(entry, collectAllProfiles(entry, new Map(), profileIndex), profileIndex);
+    const unit = parseEntryNode(entry, "Drukhari", profiles);
+
+    expect(unit!.profiles).toHaveLength(1);
+    expect(unit!.profiles[0].movement).toBe('6"'); // the inline one, untouched
+  });
+
+  it("without a profileIndex, returns profiles unchanged (backward compatible)", () => {
+    const { entry } = parse();
+    const collected = collectAllProfiles(entry);
+    expect(withLinkedUnitProfile(entry, collected)).toBe(collected);
+  });
+
+  it("also resolves a type=\"profile\" infoLink sitting directly on the unit entry", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<catalogue id="c" name="Xenos - Tyranids" xmlns="http://www.battlescribe.net/schema/catalogueSchema">
+  <sharedProfiles>
+    <profile id="term-1" name="Termagants" hidden="false" typeId="c547-1836-d8a-ff4f" typeName="Unit">
+      <characteristics>
+        <characteristic name="M">6"</characteristic>
+        <characteristic name="T">3</characteristic>
+      </characteristics>
+    </profile>
+  </sharedProfiles>
+  <sharedSelectionEntries>
+    <selectionEntry id="u-term" name="Termagants" type="unit" hidden="false">
+      <infoLinks>
+        <infoLink id="il" name="Termagants" hidden="false" targetId="term-1" type="profile"/>
+      </infoLinks>
+    </selectionEntry>
+  </sharedSelectionEntries>
+</catalogue>`;
+    const parsed = xmlParser.parse(xml);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[0];
+    const profiles = withLinkedUnitProfile(entry, collectAllProfiles(entry, new Map(), profileIndex), profileIndex);
+    const unit = parseEntryNode(entry, "Tyranids", profiles);
+
+    expect(unit!.profiles).toHaveLength(1);
+    expect(unit!.profiles[0]).toMatchObject({ name: "Termagants", movement: '6"', toughness: "3" });
   });
 });
