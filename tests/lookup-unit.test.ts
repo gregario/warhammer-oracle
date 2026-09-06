@@ -175,4 +175,38 @@ describe("lookup_unit tool", () => {
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("No unit found");
   });
+
+  it("asks which faction when one name is several datasheets with different stats", async () => {
+    // The Helbrute moves 6\" for most Chaos armies but faster for the mono-god
+    // legions (World Eaters 9\").
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Helbrute" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("different stats");
+    expect(text).toContain("World Eaters");
+    expect(text).not.toContain("### Unit Profiles");
+  });
+
+  it("returns the datasheet once that ambiguity is pinned with a faction", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Helbrute", faction: "World Eaters" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("### Unit Profiles");
+    expect(text).not.toContain("different stats");
+  });
+
+  it("does not disambiguate a cross-faction import that shares its stat line", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Leman Russ Battle Tank" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("### Unit Profiles");
+    expect(text).toContain("Astra Militarum");
+    expect(text).not.toContain("different stats");
+  });
 });

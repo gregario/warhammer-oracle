@@ -4,6 +4,7 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
+import { rankUnitMatches, ambiguousFactionMatches } from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
@@ -148,6 +149,43 @@ function formatKTOperative(op: KillTeamOperative): string {
   return sections.join("\n\n");
 }
 
+/**
+ * The core defensive characteristics (M / T / Sv / W), deduped and sorted.
+ * Used to tell a cross-faction import (same stat line) from a genuinely
+ * different datasheet of the same name.
+ *
+ * Deliberately not Ld / OC: several units (Bloodletters, Daemonettes, …) are
+ * imported with an unchanged M/T/Sv/W but a fluff-tweaked OC, and forcing a
+ * "which army?" on a Toughness question there is just noise. It also ignores
+ * the profile row *name* (a chapter prefix like "Black Templars Gladiator
+ * Lancer") and the duplicate-row artefact some datasheets carry.
+ */
+function unitStatLine(unit: Unit): string {
+  return [
+    ...new Set(
+      unit.profiles.map((p) => [p.movement, p.toughness, p.save, p.wounds].join("/")),
+    ),
+  ]
+    .sort()
+    .join(" ");
+}
+
+function ktStatLine(op: KillTeamOperative): string {
+  const p = op.profile;
+  return [p.apl, p.movement, p.save, p.wounds].join("/");
+}
+
+function formatFactionDisambiguation(
+  name: string,
+  options: { name: string; faction: string }[],
+): string {
+  const list = options.map((o) => `- **${o.name}** (${o.faction})`).join("\n");
+  return (
+    `"${name}" is more than one datasheet with different stats, depending on faction. ` +
+    `Re-run \`lookup_unit\` with the \`faction\` argument set to one of:\n\n${list}`
+  );
+}
+
 // === Tool Registration ===
 
 export function registerLookupUnit(server: McpServer): void {
@@ -176,7 +214,7 @@ export function registerLookupUnit(server: McpServer): void {
           candidates = fuzzySearch(candidates, faction, ["faction"]);
         }
 
-        const matches = fuzzySearch(candidates, unit_name, ["name"]);
+        const matches = rankUnitMatches(candidates, unit_name, ktStatLine);
 
         if (matches.length === 0) {
           const suggestion = faction
@@ -188,6 +226,15 @@ export function registerLookupUnit(server: McpServer): void {
                 type: "text" as const,
                 text: `No Kill Team operative found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}\n\n${suggestion}`,
               },
+            ],
+          };
+        }
+
+        const ktAmbiguous = ambiguousFactionMatches(matches, unit_name, ktStatLine);
+        if (ktAmbiguous) {
+          return {
+            content: [
+              { type: "text" as const, text: formatFactionDisambiguation(matches[0].name, ktAmbiguous) },
             ],
           };
         }
@@ -210,7 +257,7 @@ export function registerLookupUnit(server: McpServer): void {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
       }
 
-      const matches = fuzzySearch(candidates, unit_name, ["name"]);
+      const matches = rankUnitMatches(candidates, unit_name, unitStatLine);
 
       if (matches.length === 0) {
         const suggestion = faction
@@ -222,6 +269,15 @@ export function registerLookupUnit(server: McpServer): void {
               type: "text" as const,
               text: `No unit found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}\n\n${suggestion}`,
             },
+          ],
+        };
+      }
+
+      const ambiguous = ambiguousFactionMatches(matches, unit_name, unitStatLine);
+      if (ambiguous) {
+        return {
+          content: [
+            { type: "text" as const, text: formatFactionDisambiguation(matches[0].name, ambiguous) },
           ],
         };
       }

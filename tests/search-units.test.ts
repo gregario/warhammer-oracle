@@ -59,6 +59,25 @@ describe("search_units tool", () => {
     expect(text).toContain("Keywords:");
   });
 
+  it("ranks an exact name match above a longer one, and the canonical faction first", async () => {
+    const result = await client.callTool({
+      name: "search_units",
+      arguments: { query: "Leman Russ Battle Tank" },
+    });
+    const lines = getText(result)
+      .split("\n")
+      .filter((l) => l.startsWith("**"));
+    // exact name wins the top slot (not "Leman Russ Battle Tank Commander" etc.)
+    expect(lines[0]).toContain("Leman Russ Battle Tank");
+    // and among the two "Leman Russ Battle Tank" datasheets, the Astra
+    // Militarum one — whose catalogue is its own faction — comes before the
+    // Genestealer Cults import
+    const am = lines.findIndex((l) => l.includes("Leman Russ Battle Tank** (Astra Militarum)"));
+    const gsc = lines.findIndex((l) => l.includes("Leman Russ Battle Tank** (Genestealer Cults)"));
+    expect(am).toBeGreaterThanOrEqual(0);
+    expect(gsc).toBeGreaterThan(am);
+  });
+
   it("filters by max_points", async () => {
     const result = await client.callTool({
       name: "search_units",
