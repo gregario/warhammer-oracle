@@ -397,6 +397,83 @@ function collectAllProfiles(entry: any, ruleIndex?: Map<string, any>, profileInd
   return [...direct, ...ruleAbilities, ...subEntryProfiles, ...groupProfiles];
 }
 
+/**
+ * A datasheet's Unit stat line (M/T/Sv/W/Ld/OC) is normally an inline
+ * <profile> on the entry or one of its model sub-entries. BSData/wh40k-11e
+ * restructured a large minority of datasheets (~248: Kabalite Warriors,
+ * Termagants, Leman Russ Battle Tank, ... — heaviest in Drukhari, Genestealer
+ * Cults, Astra Militarum, Aeldari, Tyranids) so that the Unit profile is
+ * instead a top-level `sharedProfiles` entry reached via
+ * <infoLink type="profile"> nested on each weapon-loadout model sub-entry
+ * (e.g. unit → selectionEntryGroups → selectionEntries → infoLinks). Some 10e
+ * catalogues do the same (confirmed: 10e Termagants). ruleLinksToAbilityProfiles
+ * only keeps Abilities-typed infoLink targets, so these stat lines were dropped
+ * entirely and the unit surfaced with an empty `profiles` array.
+ *
+ * This walks the entry's inline tree for such infoLinks and returns the raw
+ * resolved profile nodes, deduped by targetId — the same Unit profile is
+ * linked once per model variant (~6× for Kabalite Warriors). Resolution is
+ * strictly by targetId: a shared library often carries several same-named
+ * Unit profiles (Kabalite Warriors `comment:"Drukhari"` M7" vs
+ * `comment:"Ynnari"` M8"), and the datasheet names the exact one. The
+ * Unit-typeId gate excludes damage-tier profiles ("Damaged: X Wounds
+ * Remaining"), which BSData types as Abilities, not Unit.
+ *
+ * Callers apply this only as a fallback — when the profiles already collected
+ * for the entry contain no Unit-typed profile — so a datasheet that already
+ * had a stat line (the overwhelming majority, and every currently-correct 10e
+ * unit) is never touched and no duplicate stat row can appear. `withLinkedUnitProfile`
+ * packages that guard.
+ *
+ * Residual: a unit whose model sub-entries are themselves reached only via an
+ * entryLink to shared content (rare — e.g. Space Wolves' Wolf Guard
+ * Headtakers) is not covered, since this walks the inline tree only.
+ */
+function collectLinkedUnitProfiles(
+  entry: any,
+  profileIndex: Map<string, any>,
+): any[] {
+  const found: any[] = [];
+  const seen = new Set<string>();
+  const visit = (node: any): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    for (const link of ensureArray(node.infoLinks?.infoLink)) {
+      if (link["@_type"] !== "profile" || link["@_hidden"] === "true") continue;
+      const targetId = link["@_targetId"];
+      if (!targetId || seen.has(targetId)) continue;
+      const target = profileIndex.get(targetId);
+      if (!target || target["@_typeId"] !== UNIT_PROFILE_TYPE_ID) continue;
+      seen.add(targetId);
+      found.push(target);
+    }
+    visit(node.selectionEntries?.selectionEntry);
+    visit(node.selectionEntryGroups?.selectionEntryGroup);
+  };
+  visit(entry);
+  return found;
+}
+
+/**
+ * Returns `profiles` unchanged if it already has a Unit-typed stat profile;
+ * otherwise appends any Unit profiles reachable from `entry` via
+ * <infoLink type="profile"> (see collectLinkedUnitProfiles). No-op without a
+ * `profileIndex`.
+ */
+export function withLinkedUnitProfile(
+  entry: any,
+  profiles: any[],
+  profileIndex?: Map<string, any>,
+): any[] {
+  if (!profileIndex) return profiles;
+  if (profiles.some((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID)) return profiles;
+  const linked = collectLinkedUnitProfiles(entry, profileIndex);
+  return linked.length ? [...profiles, ...linked] : profiles;
+}
+
 function extractPoints(entry: any): number | null {
   const costs = ensureArray(entry.costs?.cost);
   const ptsCost = costs.find(

@@ -27,6 +27,7 @@ import {
   extractFaction,
   normalizeJsonNode,
   ruleLinksToAbilityProfiles,
+  withLinkedUnitProfile,
 } from "../src/lib/xml-parser.js";
 import type { Unit, Detachment, Enhancement, CrusadeHonour, KillTeamOperative } from "../src/types.js";
 
@@ -628,7 +629,13 @@ function parseEntryWithLinks(
   if (type !== "unit" && type !== "model") return null;
 
   // Collect all profiles including from entryLinks (resolved against global index)
-  const profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex, profileIndex);
+  let profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex, profileIndex);
+
+  // Fallback for datasheets whose Unit stat line is only an <infoLink
+  // type="profile"> to a shared Unit profile, never inline (~248 in 11e; some
+  // in 10e) — otherwise they surface with an empty stat table. No-op when a
+  // stat line was already collected inline.
+  profiles = withLinkedUnitProfile(entry, profiles, profileIndex);
 
   return parseEntryNode(entry, faction, profiles);
 }
