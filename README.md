@@ -68,7 +68,9 @@ Look up a unit datasheet by name. Returns stat profiles, unit size (model count)
 "What are the stats for a Leman Russ Battle Tank?"
 ```
 
-**Parameters:** `unit_name` (required), `faction` (optional), `game_mode` (optional: `40k`/`40k_11e` (default, 11th Edition), `40k_10e`, `combat_patrol`, `kill_team`)
+When a name has different datasheets, the tool lists the matching factions. If a name and faction still have multiple datasheets, it also lists their IDs; pass the faction and one `datasheet_id` back to select it.
+
+**Parameters:** `unit_name` (required), `faction` (optional), `datasheet_id` (optional, exact ID shown for same-faction variants), `game_mode` (optional: `40k`/`40k_11e` (default, 11th Edition), `40k_10e`, `combat_patrol`, `kill_team`)
 
 ### `lookup_keyword`
 
