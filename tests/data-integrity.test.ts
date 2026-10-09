@@ -276,15 +276,14 @@ describe("UNITS_11E data integrity", () => {
     }
   });
 
-  it("most Chaos Space Marines units carry Heretic Astartes (legitimate exceptions: Daemon-ally units like Nurglings/Bloodletters, Chaos Knights ally imports, and un-retagged Horus Heresy [Legends] vehicles)", () => {
+  it("Heretic Astartes appears on more than 75 distinct Chaos Space Marines datasheets", () => {
     const csm = UNITS_11E.filter((u) => u.faction === "Chaos Space Marines");
-    const withKeyword = csm.filter((u) => u.keywords.includes("Heretic Astartes"));
-    // Lower than it might look at a glance: fixing the unitOnly entryLink bug also
-    // correctly surfaced every ally-importable Chaos Knight and Chaos Daemon named
-    // character/unit under the Chaos Space Marines faction too (the exact same
-    // intentional pattern already established for Imperial Knights' Canis Rex
-    // appearing under 17 Imperium factions), which naturally dilutes this ratio.
-    expect(withKeyword.length / csm.length).toBeGreaterThan(0.5);
+    const taggedNames = new Set(
+      csm.filter((u) => u.keywords.includes("Heretic Astartes")).map((u) => u.name),
+    );
+    // Count distinct datasheets: shared-entry and root-link aliases previously
+    // inflated the tagged numerator, while imported allies diluted the ratio.
+    expect(taggedNames.size).toBeGreaterThan(75);
   });
 
   it("units generally carry their catalogue's army-wide keyword, not just faction-string metadata (Space Marines / Adeptus Astartes, Necrons / Necrons)", () => {
@@ -316,7 +315,7 @@ describe("UNITS_11E data integrity", () => {
     const phantomNames = [
       "Wolf Scout", "Wolf Scout w/ plasma gun", "Wolf Scout w/ haywire mine",
       "Wolf Scout w/ runic stave and Thunderclap", "Wolf Scout Pack Leader",
-      "Burna Boy", "Spanner", "Loota", "Runtherd", "Squighog Boy", "Nob on Smasha Squig",
+      "Burna Boy", "Spanner", "Loota", "Squighog Boy", "Nob on Smasha Squig",
       "Cyber-mastiff", "Jakhal", "Geminae Superia",
     ];
     for (const name of phantomNames) {
@@ -324,10 +323,22 @@ describe("UNITS_11E data integrity", () => {
     }
 
     // The real squads they belong to must still be present and fully tagged.
-    for (const name of ["Wolf Scouts", "Burna Boyz"]) {
-      const units = UNITS_11E.filter((u) => u.name === name);
-      expect(units.length, name).toBeGreaterThan(0);
-      for (const u of units) expect(u.keywords.length, `${name} (${u.faction})`).toBeGreaterThan(2);
+    for (const names of [["Wolf Scouts"], ["Burna Boyz", "Burna Boyz [Legends]"]]) {
+      const units = UNITS_11E.filter((u) => names.includes(u.name));
+      expect(units.length, names.join(" or ")).toBeGreaterThan(0);
+      for (const u of units) expect(u.keywords.length, `${u.name} (${u.faction})`).toBeGreaterThan(2);
+    }
+  });
+
+  it("the root-linked Orks Runtherd, when present, is one complete character rather than an orphaned shared model", () => {
+    // The committed data predates BSData's standalone Runtherd. The scheduled
+    // sync adds it, while the generator regression test covers that inclusion.
+    const runtherds = UNITS_11E.filter((u) => u.faction === "Orks" && u.name === "Runtherd");
+    expect(runtherds.length).toBeLessThanOrEqual(1);
+    for (const runtherd of runtherds) {
+      expect(runtherd.id).not.toBe("552d-6c0d-80e8-ac32");
+      expect(runtherd.keywords).toEqual(expect.arrayContaining(["Infantry", "Character", "Orks", "Support"]));
+      expect(runtherd.points).toBeGreaterThan(0);
     }
   });
 

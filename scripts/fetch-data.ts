@@ -301,31 +301,17 @@ async function fetchCatalogueRepo(
       console.log(`    → ${catDetachments.length} detachments, ${catEnhancements.length} enhancements`);
     }
 
-    // 2a: Direct inline units from this catalogue (selectionEntries + own sharedSelectionEntries)
+    // 2a: Direct inline units from this catalogue. Shared entries are reusable
+    // definitions, not roster choices; step 2b includes only those with a
+    // root-level entryLink. Orks has both an orphaned, sparse Runtherd model
+    // and a separately root-linked, fully tagged Runtherd character.
     const directEntries = ensureArray(cat.raw.selectionEntries?.selectionEntry);
     const ownSharedEntries = ensureArray(cat.raw.sharedSelectionEntries?.selectionEntry);
     const topLevelCandidates = [...directEntries, ...ownSharedEntries];
 
-    // Some top-level sharedSelectionEntries are pure reusable components —
-    // one per-model wargear loadout variant of a real squad (e.g. "Wolf
-    // Scout w/ plasma gun", one of several such entries only ever selected
-    // via the real "Wolf Scouts" unit's own "12 Models"/"6 Models" wargear
-    // groups) — not independently fieldable datasheets. Sweeping every
-    // top-level entry unconditionally (as this loop used to) emitted these
-    // as phantom duplicate "units" with only their own sparse/empty
-    // categoryLinks, since the real squad-wide keywords live on the
-    // consuming unit, not the component (confirmed against raw BSData:
-    // Wolf Scout family, Burna Boy, Sister Novitiate, Deathwatch Veteran,
-    // Cyber-mastiff, etc. — 20+ phantom units across ~8 factions). Detect
-    // these by collecting every entryLink target referenced from within
-    // any top-level entry's own descendant tree, and excluding a candidate
-    // from this sweep if something else consumes it that way — unless
-    // it's ALSO independently reachable via the catalogue's own top-level
-    // entryLinks (the real "roster access" mechanism used in step 2b),
-    // which is how genuinely standalone units correctly stay included
-    // (e.g. Fabius Bile: a thin "unit" wrapper reachable at the top level,
-    // whose own categoryLinks are sparse but whose single nested "model"
-    // child isn't referenced by anything else at all).
+    // A direct entry may still be a nested component of another entry. Keep
+    // the existing nested-link check, including links inside shared entries,
+    // so those components are not emitted as independent units.
     const nestedlyConsumedIds = collectNestedEntryLinkTargets(topLevelCandidates);
     const rootEntryLinkTargetIds = new Set(
       ensureArray(cat.raw.entryLinks?.entryLink)
@@ -333,7 +319,7 @@ async function fetchCatalogueRepo(
         .filter(Boolean),
     );
 
-    for (const entry of topLevelCandidates) {
+    for (const entry of directEntries) {
       const id = entry["@_id"];
       if (id && nestedlyConsumedIds.has(id) && !rootEntryLinkTargetIds.has(id)) continue;
       const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
