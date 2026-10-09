@@ -113,6 +113,14 @@ describe("rankUnitMatches", () => {
     expect(out[0].name).toBe("Intercessor Squad");
   });
 
+  it("resolves a one-character typo through the name scorer's trigram tier", () => {
+    const out = rankUnitMatches(
+      [{ name: "Intercessor Squad", faction: "Adeptus Astartes - Space Marines", keywords: ["Adeptus Astartes"] }],
+      "Intercessr Squad",
+    );
+    expect(out.map((unit) => unit.name)).toEqual(["Intercessor Squad"]);
+  });
+
   it("returns nothing when no name clears the score floor", () => {
     expect(rankUnitMatches([lemanRussAM], "Aeldari Farseer")).toHaveLength(0);
   });

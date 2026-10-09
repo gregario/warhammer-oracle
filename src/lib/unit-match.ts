@@ -57,7 +57,7 @@ export function rankUnitMatches<T extends NamedFactioned>(
   units: T[],
   query: string,
   contentOf: (item: T) => string = () => "",
-  minScore = 0.5,
+  minScore = 0.3,
 ): T[] {
   const ranked = rankByName(units, query, (u) => u.name, minScore);
   if (ranked.length === 0) return [];

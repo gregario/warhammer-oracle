@@ -157,6 +157,16 @@ describe("lookup_unit tool", () => {
     expect(text).toContain("Abaddon the Despoiler");
   });
 
+  it("fuzzy matches a one-character typo in a unit name", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Intercessr Squad", faction: "Adeptus Astartes - Space Marines" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("# Intercessor Squad");
+    expect(text).toContain("### Unit Profiles");
+  });
+
   it("filters by faction when provided", async () => {
     const result = await client.callTool({
       name: "lookup_unit",
