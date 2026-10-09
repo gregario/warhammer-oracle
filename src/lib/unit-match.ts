@@ -27,27 +27,36 @@ export function isCanonicalFaction(entry: NamedFactioned): boolean {
   return entry.keywords.some((kw) => normalizeName(kw) === faction);
 }
 
-function dedupeKey(entry: NamedFactioned): string {
-  return `${normalizeName(entry.name)}::${normalizeName(entry.faction)}`;
+/** Compare everything the lookup formatter can return, except catalogue identity. */
+export function datasheetContentKey<T extends NamedFactioned>(entry: T): string {
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(entry).filter(([field]) => !["id", "faction", "gameSystem"].includes(field)),
+    ),
+  );
+}
+
+function dedupeKey<T extends NamedFactioned>(entry: T, contentOf: (item: T) => string): string {
+  return JSON.stringify([normalizeName(entry.name), normalizeName(entry.faction), contentOf(entry)]);
 }
 
 /**
  * Rank `units` for a `lookup_*`-style "which datasheet did they mean" query:
  * score by name and keep the best-scoring tier, then drop cross-faction
- * *imports* — a non-canonical entry whose stat line is already carried by a
+ * *imports* — a non-canonical entry whose content is already carried by a
  * canonical entry in that tier (Genestealer Cults' copy of the Astra Militarum
- * Leman Russ). A non-canonical entry with a stat line no canonical entry has —
+ * Leman Russ). A non-canonical entry with content no canonical entry has —
  * a genuinely parallel datasheet, e.g. the faster World Eaters Helbrute — is
  * kept. Exact-duplicate entries are collapsed; order is stable.
  *
- * `statOf` maps an entry to a comparable stat-line string; the default treats
- * every entry as stat-identical, which collapses to "keep only the canonical
+ * `contentOf` maps an entry to comparable returned content; the default treats
+ * every entry as identical, which collapses to "keep only the canonical
  * copies when any exist".
  */
 export function rankUnitMatches<T extends NamedFactioned>(
   units: T[],
   query: string,
-  statOf: (item: T) => string = () => "",
+  contentOf: (item: T) => string = () => "",
   minScore = 0.5,
 ): T[] {
   const ranked = rankByName(units, query, (u) => u.name, minScore);
@@ -60,15 +69,15 @@ export function rankUnitMatches<T extends NamedFactioned>(
     (Math.abs(r.score - topScore) < 1e-9 ? top : rest).push(r.item);
   }
 
-  const canonicalStatLines = new Set(top.filter(isCanonicalFaction).map(statOf));
+  const canonicalContents = new Set(top.filter(isCanonicalFaction).map(contentOf));
   const trimmedTop = top.filter(
-    (e) => isCanonicalFaction(e) || !canonicalStatLines.has(statOf(e)),
+    (e) => isCanonicalFaction(e) || !canonicalContents.has(contentOf(e)),
   );
 
   const seen = new Set<string>();
   const out: T[] = [];
   for (const entry of [...trimmedTop, ...rest]) {
-    const key = dedupeKey(entry);
+    const key = dedupeKey(entry, contentOf);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(entry);
@@ -78,41 +87,40 @@ export function rankUnitMatches<T extends NamedFactioned>(
 
 /**
  * Given the output of `rankUnitMatches`, is the leading result still a genuine
- * cross-faction ambiguity — one datasheet name that is several *different*
- * datasheets, one stat line per faction (or group of factions), with none
- * singled out by the import trim? If so, `lookup_unit` should say which
- * factions exist and ask for one rather than silently pick a stat line. This
+ * ambiguity — one datasheet name with different returned content, possibly
+ * within the same faction? If so, `lookup_unit` should offer every selectable
+ * variant rather than silently pick one. This
  * mirrors the disambiguation `lookup_stratagem` already does for name
  * collisions.
  *
  * Only a near-exact query is disambiguated — a loose/partial match resolving
- * to its best guess is expected behaviour. Same-name imports that share a stat
- * line (the Chaos triad's shared datasheets, a unit fielded identically by
+ * to its best guess is expected behaviour. Same-name imports that share content
+ * (the Chaos triad's shared datasheets, a unit fielded identically by
  * many Space Marine chapters) are not flagged: any copy gives the same answer.
  *
- * Returns one representative entry per distinct stat line (stable order), or
+ * Returns one entry per faction and distinct content (stable order), or
  * `null` when there is nothing to disambiguate.
  */
 export function ambiguousFactionMatches<T extends NamedFactioned>(
   matches: T[],
   query: string,
-  statOf: (item: T) => string,
+  contentOf: (item: T) => string,
 ): T[] | null {
   if (matches.length < 2) return null;
   if ((rankByName([matches[0]], query, (u) => u.name)[0]?.score ?? 0) < 0.9) return null;
 
   const topName = normalizeName(matches[0].name);
-  const seenFactions = new Set<string>();
-  const byStatLine = new Map<string, T>();
+  const contents = new Set<string>();
+  const options = new Map<string, T>();
   for (const m of matches) {
     if (normalizeName(m.name) !== topName) continue;
     const faction = normalizeName(m.faction);
-    if (seenFactions.has(faction)) continue;
-    seenFactions.add(faction);
-    const stat = statOf(m);
-    if (!byStatLine.has(stat)) byStatLine.set(stat, m);
+    const content = contentOf(m);
+    contents.add(content);
+    const key = JSON.stringify([faction, content]);
+    if (!options.has(key)) options.set(key, m);
   }
-  if (seenFactions.size < 2 || byStatLine.size < 2) return null;
+  if (contents.size < 2) return null;
 
-  return [...byStatLine.values()];
+  return [...options.values()];
 }

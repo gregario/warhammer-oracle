@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ambiguousFactionMatches, isCanonicalFaction, rankUnitMatches } from "./unit-match.js";
+import { ambiguousFactionMatches, datasheetContentKey, isCanonicalFaction, rankUnitMatches } from "./unit-match.js";
 
 // Trimmed-down stand-ins for `Unit` — rankUnitMatches only reads name/faction/keywords.
 const lemanRussAM = {
@@ -56,6 +56,24 @@ describe("isCanonicalFaction", () => {
 });
 
 describe("rankUnitMatches", () => {
+  const sorcerer = {
+    name: "Sorcerer",
+    faction: "Chaos Space Marines",
+    keywords: ["Heretic Astartes", "Sorcerer"],
+    points: 60,
+    rangedWeapons: ["Infernal Gaze"],
+    abilities: ["Prescience"],
+  };
+
+  it.each([
+    ["points", { ...sorcerer, points: 95 }],
+    ["weapons", { ...sorcerer, rangedWeapons: ["Pandaemonic Delusion"] }],
+    ["abilities", { ...sorcerer, abilities: ["Twisted Sorceries"] }],
+  ])("retains same-faction %s variants with different returned content", (_field, variant) => {
+    const matches = rankUnitMatches([sorcerer, variant], "Sorcerer", datasheetContentKey);
+    expect(matches).toHaveLength(2);
+  });
+
   it("prefers the faction-canonical copy over an import — GSC Leman Russ bug", () => {
     // GSC copy is first in data-file order, which is what used to win.
     const out = rankUnitMatches([lemanRussGSC, lemanRussAM], "Leman Russ Battle Tank");
@@ -162,7 +180,7 @@ describe("ambiguousFactionMatches", () => {
     ]);
   });
 
-  it("returns one representative per distinct stat line, not per faction", () => {
+  it("offers every faction when two stat lines exist", () => {
     const units = [
       helb("Chaos Space Marines", '6"'),
       helb("Chaos Daemons", '6"'),
@@ -171,7 +189,12 @@ describe("ambiguousFactionMatches", () => {
     ];
     const matches = rankUnitMatches(units, "Helbrute", statOf);
     const tie = ambiguousFactionMatches(matches, "Helbrute", statOf);
-    expect(tie).toHaveLength(2);
+    expect(tie?.map((u) => u.faction)).toEqual([
+      "Chaos Space Marines",
+      "Chaos Daemons",
+      "Chaos Knights",
+      "World Eaters",
+    ]);
   });
 
   it("does NOT flag same-name imports that share a stat line", () => {
@@ -201,5 +224,15 @@ describe("ambiguousFactionMatches", () => {
 
   it("does not flag a single match", () => {
     expect(ambiguousFactionMatches([helb("World Eaters", '9"', true)], "Helbrute", statOf)).toBeNull();
+  });
+
+  it("offers distinct same-faction datasheets instead of hiding the second one", () => {
+    const units = [
+      { name: "Great Unclean One", faction: "Death Guard", keywords: ["Death Guard"], content: "Plague Legions" },
+      { name: "Great Unclean One", faction: "Death Guard", keywords: ["Death Guard"], content: "Shadow Legion" },
+    ];
+    const contentOf = (u: (typeof units)[number]) => u.content;
+    const matches = rankUnitMatches(units, "Great Unclean One", contentOf);
+    expect(ambiguousFactionMatches(matches, "Great Unclean One", contentOf)).toHaveLength(2);
   });
 });

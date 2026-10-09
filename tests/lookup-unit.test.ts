@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
+import { UNITS_11E } from "../src/data/units-11e.js";
 
 let client: Client;
 
@@ -197,6 +198,59 @@ describe("lookup_unit tool", () => {
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     expect(text).toContain("### Unit Profiles");
     expect(text).not.toContain("different stats");
+  });
+
+  it("offers the Chaos Space Marines Sorcerer when same-stat variants differ in points, weapons, and abilities", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Sorcerer", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("**Sorcerer** (Chaos Space Marines)");
+    expect(text).toContain("**Sorcerer** (Thousand Sons)");
+    expect(text).toContain("**Sorcerer** (Emperor's Children)");
+    expect(text).not.toContain("### Unit Profiles");
+  });
+
+  it("offers selectable IDs for different datasheets with the same name and faction", async () => {
+    const variants = UNITS_11E.filter((unit) => unit.name === "Great Unclean One" && unit.faction === "Death Guard");
+    const plagueLegions = variants.find((unit) => unit.keywords.includes("Plague Legions"));
+    const shadowLegion = variants.find((unit) => unit.keywords.includes("Shadow Legion"));
+    expect(plagueLegions).toBeDefined();
+    expect(shadowLegion).toBeDefined();
+
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Great Unclean One", faction: "Death Guard", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("datasheet_id");
+    expect(text).toContain(plagueLegions!.id);
+    expect(text).toContain(shadowLegion!.id);
+
+    const selected = await client.callTool({
+      name: "lookup_unit",
+      arguments: {
+        unit_name: "Great Unclean One",
+        faction: "Death Guard",
+        datasheet_id: shadowLegion!.id,
+        game_mode: "40k_11e",
+      },
+    });
+    const selectedText = (selected.content as Array<{ type: string; text: string }>)[0].text;
+    expect(selectedText).toContain("### Unit Profiles");
+    expect(selectedText).toContain("The Shadow of Chaos");
+  });
+
+  it("rejects an unknown datasheet ID instead of falling back to another datasheet", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Great Unclean One", datasheet_id: "missing-id", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("No unit found");
+    expect(text).toContain("missing-id");
+    expect(text).not.toContain("### Unit Profiles");
   });
 
   it("does not disambiguate a cross-faction import that shares its stat line", async () => {

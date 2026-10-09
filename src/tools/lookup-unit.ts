@@ -4,7 +4,7 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
-import { rankUnitMatches, ambiguousFactionMatches } from "../lib/unit-match.js";
+import { rankUnitMatches, ambiguousFactionMatches, datasheetContentKey } from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
@@ -149,40 +149,19 @@ function formatKTOperative(op: KillTeamOperative): string {
   return sections.join("\n\n");
 }
 
-/**
- * The core defensive characteristics (M / T / Sv / W), deduped and sorted.
- * Used to tell a cross-faction import (same stat line) from a genuinely
- * different datasheet of the same name.
- *
- * Deliberately not Ld / OC: several units (Bloodletters, Daemonettes, …) are
- * imported with an unchanged M/T/Sv/W but a fluff-tweaked OC, and forcing a
- * "which army?" on a Toughness question there is just noise. It also ignores
- * the profile row *name* (a chapter prefix like "Black Templars Gladiator
- * Lancer") and the duplicate-row artefact some datasheets carry.
- */
-function unitStatLine(unit: Unit): string {
-  return [
-    ...new Set(
-      unit.profiles.map((p) => [p.movement, p.toughness, p.save, p.wounds].join("/")),
-    ),
-  ]
-    .sort()
-    .join(" ");
-}
-
-function ktStatLine(op: KillTeamOperative): string {
-  const p = op.profile;
-  return [p.apl, p.movement, p.save, p.wounds].join("/");
-}
-
 function formatFactionDisambiguation(
   name: string,
-  options: { name: string; faction: string }[],
+  options: { name: string; faction: string; id: string }[],
 ): string {
-  const list = options.map((o) => `- **${o.name}** (${o.faction})`).join("\n");
+  const counts = new Map<string, number>();
+  for (const option of options) counts.set(option.faction, (counts.get(option.faction) ?? 0) + 1);
+  const needsId = [...counts.values()].some((count) => count > 1);
+  const list = options
+    .map((o) => `- **${o.name}** (${o.faction})${(counts.get(o.faction) ?? 0) > 1 ? ` — datasheet_id: \`${o.id}\`` : ""}`)
+    .join("\n");
   return (
-    `"${name}" is more than one datasheet with different stats, depending on faction. ` +
-    `Re-run \`lookup_unit\` with the \`faction\` argument set to one of:\n\n${list}`
+    `"${name}" is more than one datasheet with different stats, weapons, abilities, points, or other details. ` +
+    `Re-run \`lookup_unit\` with the \`faction\` argument${needsId ? " and \`datasheet_id\` when shown" : ""} set to one of:\n\n${list}`
   );
 }
 
@@ -198,6 +177,10 @@ export function registerLookupUnit(server: McpServer): void {
         .string()
         .optional()
         .describe("Optional faction name to narrow results (e.g. 'Chaos Space Marines', 'Astartes')"),
+      datasheet_id: z
+        .string()
+        .optional()
+        .describe("Optional exact datasheet ID shown for variants that share a name and faction; pass with faction"),
       game_mode: z
         .enum(["40k", "40k_10e", "40k_11e", "combat_patrol", "kill_team"])
         .optional()
@@ -206,15 +189,16 @@ export function registerLookupUnit(server: McpServer): void {
             "'40k'/'40k_11e' for 11th Edition (current default), or 'kill_team' for Kill Team operatives.",
         ),
     },
-    async ({ unit_name, faction, game_mode }) => {
+    async ({ unit_name, faction, datasheet_id, game_mode }) => {
       if (game_mode === "kill_team") {
         let candidates: KillTeamOperative[] = [...KILL_TEAM_OPERATIVES];
 
         if (faction) {
           candidates = fuzzySearch(candidates, faction, ["faction"]);
         }
+        if (datasheet_id) candidates = candidates.filter((op) => op.id === datasheet_id);
 
-        const matches = rankUnitMatches(candidates, unit_name, ktStatLine);
+        const matches = rankUnitMatches(candidates, unit_name, datasheetContentKey);
 
         if (matches.length === 0) {
           const suggestion = faction
@@ -224,13 +208,13 @@ export function registerLookupUnit(server: McpServer): void {
             content: [
               {
                 type: "text" as const,
-                text: `No Kill Team operative found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}\n\n${suggestion}`,
+                text: `No Kill Team operative found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}${datasheet_id ? ` (datasheet_id: "${datasheet_id}")` : ""}\n\n${suggestion}`,
               },
             ],
           };
         }
 
-        const ktAmbiguous = ambiguousFactionMatches(matches, unit_name, ktStatLine);
+        const ktAmbiguous = ambiguousFactionMatches(matches, unit_name, datasheetContentKey);
         if (ktAmbiguous) {
           return {
             content: [
@@ -256,8 +240,9 @@ export function registerLookupUnit(server: McpServer): void {
       if (faction) {
         candidates = fuzzySearch(candidates, faction, ["faction"]);
       }
+      if (datasheet_id) candidates = candidates.filter((unit) => unit.id === datasheet_id);
 
-      const matches = rankUnitMatches(candidates, unit_name, unitStatLine);
+      const matches = rankUnitMatches(candidates, unit_name, datasheetContentKey);
 
       if (matches.length === 0) {
         const suggestion = faction
@@ -267,13 +252,13 @@ export function registerLookupUnit(server: McpServer): void {
           content: [
             {
               type: "text" as const,
-              text: `No unit found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}\n\n${suggestion}`,
+              text: `No unit found matching "${unit_name}".${faction ? ` (faction filter: "${faction}")` : ""}${datasheet_id ? ` (datasheet_id: "${datasheet_id}")` : ""}\n\n${suggestion}`,
             },
           ],
         };
       }
 
-      const ambiguous = ambiguousFactionMatches(matches, unit_name, unitStatLine);
+      const ambiguous = ambiguousFactionMatches(matches, unit_name, datasheetContentKey);
       if (ambiguous) {
         return {
           content: [
