@@ -1,5 +1,5 @@
 {
-  "version": "0.2.91",
+  "version": "0.2.92",
   "tools_count": 14,
   "npm": {
     "published": true
@@ -19,7 +19,7 @@
     "merged": true
   },
   "github": {
-    "release_tag": "v0.2.91",
+    "release_tag": "v0.2.92",
     "sponsor_enabled": false
   },
   "ci": {
