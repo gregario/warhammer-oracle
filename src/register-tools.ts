@@ -13,6 +13,7 @@ import { registerLookupEnhancement } from "./tools/lookup-enhancement.js";
 import { registerLookupPloy } from "./tools/lookup-ploy.js";
 import { registerDeterminePrimaryMission } from "./tools/determine-primary-mission.js";
 import { registerLookupCrusade } from "./tools/lookup-crusade.js";
+import { registerLookupWeapon } from "./tools/lookup-weapon.js";
 
 export function registerTools(server: McpServer): void {
   registerLookupUnit(server);
@@ -29,4 +30,5 @@ export function registerTools(server: McpServer): void {
   registerLookupPloy(server);
   registerDeterminePrimaryMission(server);
   registerLookupCrusade(server);
+  registerLookupWeapon(server);
 }
