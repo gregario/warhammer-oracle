@@ -28,7 +28,11 @@ import {
   normalizeJsonNode,
   ruleLinksToAbilityProfiles,
   withLinkedUnitProfile,
+  isHiddenIn,
+  isLinkHiddenIn,
+  collectDynamicCategoryIds,
 } from "../src/lib/xml-parser.js";
+import type { VisibilityEnv } from "../src/lib/xml-parser.js";
 import type { Unit, Detachment, Enhancement, CrusadeHonour, KillTeamOperative } from "../src/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -155,6 +159,7 @@ async function fetchCatalogueRepo(
   // abilities ("Praesidium Shield", "Vexilla") this way, not via a rule
   // infoLink — without this, those abilities were silently dropped entirely.
   const globalProfileIndex = new Map<string, any>();
+  const gameSystemNodes: any[] = [];
 
   for (const gst of gameSystemFiles) {
     console.log(`  Fetching ${gst.path}...`);
@@ -162,6 +167,7 @@ async function fetchCatalogueRepo(
     const parsed = parseNode(raw);
     const gs = parsed.gameSystem;
     if (!gs) continue;
+    gameSystemNodes.push(gs);
 
     const directRules = ensureArray(gs.rules?.rule);
     const sharedRules = ensureArray(gs.sharedRules?.rule);
@@ -242,6 +248,7 @@ async function fetchCatalogueRepo(
     }
   }
   console.log(`  Global rule index: ${globalRuleIndex.size} rules`);
+  const dynamicCategoryIds = collectDynamicCategoryIds([...gameSystemNodes, ...catalogues.map((c) => c.raw)]);
   console.log(`  Global profile index: ${globalProfileIndex.size} profiles`);
 
   // Build a lookup from catalogue ID → ParsedCatalogue for catalogueLink resolution
@@ -322,7 +329,7 @@ async function fetchCatalogueRepo(
     for (const entry of directEntries) {
       const id = entry["@_id"];
       if (id && nestedlyConsumedIds.has(id) && !rootEntryLinkTargetIds.has(id)) continue;
-      const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
+      const unit = parseEntryWithLinks(entry, faction, cat.id, globalSharedIndex, globalRuleIndex, globalProfileIndex, dynamicCategoryIds);
       if (unit) catUnits.push(unit);
     }
 
@@ -331,13 +338,13 @@ async function fetchCatalogueRepo(
     const topEntryLinks = ensureArray(cat.raw.entryLinks?.entryLink);
     for (const link of topEntryLinks) {
       const targetId = link["@_targetId"];
-      const hidden = link["@_hidden"] === "true";
+      const hidden = isHiddenIn(link, { primaryCatalogueId: cat.id });
       if (hidden || !targetId) continue;
 
       const target = globalSharedIndex.get(targetId);
       if (!target) continue;
 
-      const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
+      const unit = parseEntryWithLinks(target, faction, cat.id, globalSharedIndex, globalRuleIndex, globalProfileIndex, dynamicCategoryIds);
       if (unit) {
         // Use the link's id to avoid collisions with other factions using same shared entry
         const linkId = link["@_id"] || unit.id;
@@ -357,7 +364,7 @@ async function fetchCatalogueRepo(
       // Import the linked catalogue's own direct selectionEntries
       const linkedDirect = ensureArray(linkedCat.raw.selectionEntries?.selectionEntry);
       for (const entry of linkedDirect) {
-        const unit = parseEntryWithLinks(entry, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
+        const unit = parseEntryWithLinks(entry, faction, cat.id, globalSharedIndex, globalRuleIndex, globalProfileIndex, dynamicCategoryIds);
         if (unit) catUnits.push(unit);
       }
 
@@ -367,13 +374,13 @@ async function fetchCatalogueRepo(
       const linkedEntryLinks = ensureArray(linkedCat.raw.entryLinks?.entryLink);
       for (const link of linkedEntryLinks) {
         const targetId = link["@_targetId"];
-        const hidden = link["@_hidden"] === "true";
+        const hidden = isHiddenIn(link, { primaryCatalogueId: cat.id });
         if (hidden || !targetId) continue;
 
         const target = globalSharedIndex.get(targetId);
         if (!target) continue;
 
-        const unit = parseEntryWithLinks(target, faction, globalSharedIndex, globalRuleIndex, globalProfileIndex);
+        const unit = parseEntryWithLinks(target, faction, cat.id, globalSharedIndex, globalRuleIndex, globalProfileIndex, dynamicCategoryIds);
         if (unit) {
           const linkId = link["@_id"] || unit.id;
           catUnits.push({ ...unit, id: linkId });
@@ -605,25 +612,38 @@ function collectNestedEntryLinkTargets(entries: any[]): Set<string> {
 function parseEntryWithLinks(
   entry: any,
   faction: string,
+  primaryCatalogueId: string,
   globalIndex: Map<string, any>,
   ruleIndex: Map<string, any>,
   profileIndex: Map<string, any>,
+  dynamicCategoryIds: Set<string>,
 ): Unit | null {
   const type = entry["@_type"];
-  const hidden = entry["@_hidden"] === "true";
-  if (hidden) return null;
+  // Also honours a datasheet hidden only in some catalogues, e.g. Space
+  // Marines' Repulsor Executioner is "hidden if the primary catalogue is
+  // Black Templars" (see isHiddenIn).
+  if (isHiddenIn(entry, { primaryCatalogueId })) return null;
   if (type !== "unit" && type !== "model") return null;
 
   // Collect all profiles including from entryLinks (resolved against global index)
-  let profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex, profileIndex);
+  let profiles = collectAllProfilesWithGlobalLinks(entry, globalIndex, ruleIndex, profileIndex, new Set(), {
+    primaryCatalogueId,
+    ancestors: [],
+    dynamicCategoryIds,
+  });
 
   // Fallback for datasheets whose Unit stat line is only an <infoLink
   // type="profile"> to a shared Unit profile, never inline (~248 in 11e; some
   // in 10e) — otherwise they surface with an empty stat table. No-op when a
   // stat line was already collected inline.
-  profiles = withLinkedUnitProfile(entry, profiles, profileIndex);
+  profiles = withLinkedUnitProfile(entry, profiles, profileIndex, (id) => globalIndex.get(id));
 
-  return parseEntryNode(entry, faction, profiles);
+  return parseEntryNode(entry, faction, profiles, {
+    resolveEntry: (id) => globalIndex.get(id),
+    profileIndex,
+    primaryCatalogueId,
+    dynamicCategoryIds,
+  });
 }
 
 /**
@@ -695,9 +715,30 @@ function collectAllProfilesWithGlobalLinks(
   ruleIndex: Map<string, any>,
   profileIndex: Map<string, any>,
   visited: Set<string> = new Set(),
+  env: VisibilityEnv = {},
+  isGroup = false,
+  selfIds: string[] = [],
 ): any[] {
-  const direct = ensureArray(entry.profiles?.profile);
-  const ruleAbilities = ruleLinksToAbilityProfiles(entry, ruleIndex, profileIndex);
+  // `env.ancestors` are the selections enclosing `entry`; its own content is
+  // read in that context, and its children with `entry` itself added (a
+  // group isn't a selection, so its children share its context).
+  const direct = ensureArray(entry.profiles?.profile).filter((p: any) => !isHiddenIn(p, env, true));
+  const ruleAbilities = ruleLinksToAbilityProfiles(entry, ruleIndex, profileIndex, env);
+  const inner: VisibilityEnv = isGroup
+    ? env
+    : {
+        ...env,
+        ancestors: [
+          ...(env.ancestors ?? []),
+          new Set(
+            [
+              entry["@_id"],
+              ...selfIds,
+              ...ensureArray(entry.categoryLinks?.categoryLink).map((cl: any) => cl["@_targetId"]),
+            ].filter(Boolean),
+          ),
+        ],
+      };
 
   const entryLinks = ensureArray(entry.entryLinks?.entryLink);
   const linkedProfiles = entryLinks.flatMap((link: any) => {
@@ -707,16 +748,28 @@ function collectAllProfilesWithGlobalLinks(
     if (UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.test(linkName)) return [];
     const target = globalIndex.get(targetId);
     if (!target) return [];
+    if (isLinkHiddenIn(link, target, inner)) return [];
     visited.add(targetId);
-    return collectAllProfilesWithGlobalLinks(target, globalIndex, ruleIndex, profileIndex, visited);
+    return collectAllProfilesWithGlobalLinks(
+      target,
+      globalIndex,
+      ruleIndex,
+      profileIndex,
+      visited,
+      inner,
+      link["@_type"] === "selectionEntryGroup",
+      [link["@_id"], targetId],
+    );
   });
 
-  const subEntries = ensureArray(entry.selectionEntries?.selectionEntry);
+  const subEntries = ensureArray(entry.selectionEntries?.selectionEntry).filter((sub: any) => !isHiddenIn(sub, inner));
   const subEntryProfiles = subEntries.flatMap((sub: any) =>
-    collectAllProfilesWithGlobalLinks(sub, globalIndex, ruleIndex, profileIndex, visited),
+    collectAllProfilesWithGlobalLinks(sub, globalIndex, ruleIndex, profileIndex, visited, inner),
   );
 
-  const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup);
+  const groups = ensureArray(entry.selectionEntryGroups?.selectionEntryGroup).filter(
+    (group: any) => !isHiddenIn(group, inner),
+  );
   const groupProfiles = groups.flatMap((group: any) => {
     // A group's own name can be the universal-pool signal even when the
     // entryLink nested inside it isn't (see UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN):
@@ -729,7 +782,7 @@ function collectAllProfilesWithGlobalLinks(
     // the link itself is named "Mighty Champions", which doesn't match the
     // pattern; only the enclosing group's name, "Crusade", does).
     if (UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN.test(group["@_name"] ?? "")) return [];
-    return collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, profileIndex, visited);
+    return collectAllProfilesWithGlobalLinks(group, globalIndex, ruleIndex, profileIndex, visited, inner, true);
   });
 
   const all = [...direct, ...ruleAbilities, ...linkedProfiles, ...subEntryProfiles, ...groupProfiles];

@@ -723,3 +723,144 @@ describe("Crusade Honours (11th Edition only)", () => {
     expect(dupes).toEqual([]);
   });
 });
+
+describe("Unit composition & wargear options (11th Edition)", () => {
+  const find = (name: string, faction: string) => {
+    const unit = UNITS_11E.find((u) => u.name === name && u.faction === faction);
+    expect(unit, `${faction} / ${name}`).toBeDefined();
+    return unit!;
+  };
+
+  it("almost every unit has a composition, and its counts cover the unit size", () => {
+    const missing = UNITS_11E.filter((u) => u.composition.length === 0);
+    expect(missing.length).toBeLessThan(UNITS_11E.length * 0.01);
+    for (const u of UNITS_11E) {
+      if (u.composition.length === 0) continue;
+      const maxSum = u.composition.reduce((sum, c) => sum + c.max, 0);
+      expect(maxSum, `${u.faction} / ${u.name}`).toBeGreaterThanOrEqual(u.unitSize.max);
+      for (const c of u.composition) expect(c.max, `${u.faction} / ${u.name} / ${c.model}`).toBeGreaterThanOrEqual(c.min);
+    }
+  });
+
+  it("most units have wargear, with a non-empty default loadout", () => {
+    const withWargear = UNITS_11E.filter((u) => u.wargear.length > 0);
+    expect(withWargear.length / UNITS_11E.length).toBeGreaterThan(0.9);
+    for (const u of withWargear) {
+      for (const w of u.wargear) {
+        expect(w.default.length + w.options.length, `${u.faction} / ${u.name} / ${w.model}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("Space Marine Captain is a single model (regression: its Wargear choice group was counted as a 2nd model)", () => {
+    const captain = find("Captain", "Adeptus Astartes - Space Marines");
+    expect(captain.unitSize).toEqual({ min: 1, max: 1 });
+    expect(captain.composition).toEqual([{ model: "Captain", min: 1, max: 1 }]);
+  });
+
+  it("no plain character is inflated to 2 models any more", () => {
+    const inflated = UNITS_11E.filter(
+      (u) => u.keywords.includes("Character") && u.composition.length === 1 && u.unitSize.max === 2,
+    );
+    expect(inflated.map((u) => `${u.faction} / ${u.name}`)).toEqual([]);
+  });
+
+  it("Space Marine Captain can swap its Master-crafted bolter for a Relic Shield loadout", () => {
+    const [wargear] = find("Captain", "Adeptus Astartes - Space Marines").wargear;
+    expect(wargear.model).toBe("Captain");
+    expect(wargear.default).toContain("Master-crafted bolter");
+    const relicShield = wargear.options.find((o) => o.includes("Relic Shield"));
+    expect(relicShield).toBeDefined();
+    expect(relicShield).toContain("replaces Master-crafted bolter");
+  });
+
+  it("Captain keeps its Leader attachment text", () => {
+    const leader = find("Captain", "Adeptus Astartes - Space Marines").abilities.filter((a) => a.name === "Leader");
+    expect(leader.some((a) => a.description.includes("INTERCESSOR SQUAD"))).toBe(true);
+  });
+
+  it("chapter-only rules stay on their own chapter's copy (Templar Vows: Black Templars only)", () => {
+    const names = (faction: string) => find("Captain", faction).abilities.map((a) => a.name);
+    expect(names("Adeptus Astartes - Black Templars")).toContain("Templar Vows");
+    expect(names("Adeptus Astartes - Space Marines")).not.toContain("Templar Vows");
+    expect(names("Adeptus Astartes - Ultramarines")).not.toContain("Templar Vows");
+  });
+
+  it("Intercessor Squad is 1 Intercessor Sergeant + 4-9 Intercessors", () => {
+    const squad = find("Intercessor Squad", "Adeptus Astartes - Space Marines");
+    expect(squad.unitSize).toEqual({ min: 5, max: 10 });
+    expect(squad.composition).toEqual([
+      { model: "Intercessor Sergeant", min: 1, max: 1 },
+      { model: "Intercessor", min: 4, max: 9 },
+    ]);
+    const sergeant = squad.wargear.find((w) => w.model === "Intercessor Sergeant");
+    expect(sergeant?.options.some((o) => o.includes("Power fist"))).toBe(true);
+    const intercessor = squad.wargear.find((w) => w.model === "Intercessor");
+    expect(intercessor?.options.some((o) => o.includes("Grenade Launcher"))).toBe(true);
+  });
+
+  it("Ork Boyz are 10-20 (9-18 Boyz + 1-2 Nobz) with both the Boy and Nob stat lines", () => {
+    const boyz = find("Boyz", "Orks");
+    expect(boyz.unitSize).toEqual({ min: 10, max: 20 });
+    expect(boyz.composition).toEqual([
+      { model: "Boy", min: 9, max: 18 },
+      { model: "Nob", min: 1, max: 2 },
+    ]);
+    expect(boyz.profiles.map((p) => p.name).sort()).toEqual(["Boy", "Nob"]);
+  });
+
+  it("Land Raider lists its fixed weapons and optional extras", () => {
+    const [wargear] = find("Land Raider", "Adeptus Astartes - Space Marines").wargear;
+    expect(wargear.default).toEqual(expect.arrayContaining(["Twin heavy bolter", "Godhammer Lascannon"]));
+    expect(wargear.options.some((o) => o.startsWith("Can also take:") && o.includes("Hunter-killer missile"))).toBe(true);
+  });
+
+  it("Repulsor Executioner's turret weapon can be swapped", () => {
+    const [wargear] = find("Repulsor Executioner", "Adeptus Astartes - Space Marines").wargear;
+    expect(wargear.options).toContain("Macro Plasma Incinerator can be replaced with Heavy Laser Destroyer");
+  });
+
+  it("a shared datasheet hidden for one catalogue isn't listed there alongside that catalogue's own version", () => {
+    // Black Templars have their own Repulsor Executioner; the Space Marines
+    // one is "hidden if the primary catalogue is Black Templars", and was
+    // previously listed too, as a second, different BT Repulsor Executioner.
+    const bt = UNITS_11E.filter(
+      (u) => u.name === "Repulsor Executioner" && u.faction === "Adeptus Astartes - Black Templars",
+    );
+    expect(bt).toHaveLength(1);
+  });
+});
+
+describe("Unit composition & wargear options (10th Edition)", () => {
+  const find = (name: string, faction: string) => {
+    const unit = UNITS.find((u) => u.name === name && u.faction === faction);
+    expect(unit, `${faction} / ${name}`).toBeDefined();
+    return unit!;
+  };
+
+  it("almost every unit has a composition", () => {
+    expect(UNITS.filter((u) => u.composition.length === 0).length).toBeLessThan(UNITS.length * 0.01);
+  });
+
+  it("Space Marine Captain is a single model with a Relic Shield option", () => {
+    const captain = find("Captain", "Adeptus Astartes - Space Marines");
+    expect(captain.unitSize).toEqual({ min: 1, max: 1 });
+    expect(captain.wargear[0].options.some((o) => o.includes("Relic Shield"))).toBe(true);
+  });
+
+  it("Intercessor Squad is 1 Intercessor Sergeant + 4-9 Intercessors", () => {
+    expect(find("Intercessor Squad", "Adeptus Astartes - Space Marines").composition).toEqual([
+      { model: "Intercessor Sergeant", min: 1, max: 1 },
+      { model: "Intercessor", min: 4, max: 9 },
+    ]);
+  });
+
+  it("Ork Boyz are 10-20 (9-19 Boyz + 1 Boss Nob)", () => {
+    const boyz = find("Boyz", "Orks");
+    expect(boyz.unitSize).toEqual({ min: 10, max: 20 });
+    expect(boyz.composition).toEqual([
+      { model: "Boy", min: 9, max: 19 },
+      { model: "Boss Nob", min: 1, max: 1 },
+    ]);
+  });
+});

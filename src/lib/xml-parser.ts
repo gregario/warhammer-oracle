@@ -6,6 +6,8 @@ import type {
   MeleeWeapon,
   Ability,
   UnitSize,
+  CompositionEntry,
+  ModelWargear,
   Detachment,
   Disposition,
   Enhancement,
@@ -54,6 +56,11 @@ const ARRAY_TAGS = [
   "entryLink",
   "catalogueLink",
   "constraint",
+  "modifier",
+  "modifierGroup",
+  "condition",
+  "conditionGroup",
+  "repeat",
 ];
 
 const parser = new XMLParser({
@@ -88,6 +95,9 @@ const ATTR_ALIAS_KEYS = new Set([
   "library",
   "field",
   "scope",
+  "childId",
+  "defaultSelectionEntryId",
+  "repeats",
 ]);
 
 // BSData's 11e JSON represents repeatable elements as flat arrays (e.g.
@@ -111,6 +121,11 @@ const PLURAL_CONTAINER_KEYS: Record<string, string> = {
   infoLinks: "infoLink",
   catalogueLinks: "catalogueLink",
   constraints: "constraint",
+  modifiers: "modifier",
+  modifierGroups: "modifierGroup",
+  conditions: "condition",
+  conditionGroups: "conditionGroup",
+  repeats: "repeat",
 };
 
 /**
@@ -186,10 +201,16 @@ function extractFaction(catalogueName: string): string {
 
 // === Profile extractors ===
 
+/**
+ * Deduped on the full stat line: a squad's loadout-variant model entries
+ * ("Intercessor", "Intercessor w/ Grenade Launcher") each carry their own
+ * copy of the same Unit profile, which surfaced as repeated identical rows.
+ */
 function extractUnitProfiles(profiles: any[]): UnitProfile[] {
+  const seen = new Set<string>();
   return profiles
     .filter((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID)
-    .map((p: any) => {
+    .map((p: any): UnitProfile => {
       const chars = ensureArray(p.characteristics?.characteristic);
       return {
         name: p["@_name"],
@@ -200,6 +221,12 @@ function extractUnitProfiles(profiles: any[]): UnitProfile[] {
         leadership: getCharacteristic(chars, "LD"),
         objectiveControl: getCharacteristic(chars, "OC"),
       };
+    })
+    .filter((profile) => {
+      const key = JSON.stringify(profile);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
 }
 
@@ -331,11 +358,12 @@ function ruleLinksToAbilityProfiles(
   entry: any,
   ruleIndex: Map<string, any>,
   profileIndex?: Map<string, any>,
+  env: VisibilityEnv = {},
 ): any[] {
   const type = entry["@_type"];
   if (type !== "unit" && type !== "model") return [];
 
-  const links = ensureArray(entry.infoLinks?.infoLink).filter((l: any) => l["@_hidden"] !== "true");
+  const links = ensureArray(entry.infoLinks?.infoLink).filter((l: any) => !isHiddenIn(l, env));
   const profiles: any[] = [];
   for (const link of links) {
     const targetId = link["@_targetId"];
@@ -345,6 +373,7 @@ function ruleLinksToAbilityProfiles(
     if (linkType === "rule") {
       const rule = ruleIndex.get(targetId);
       if (!rule || !rule.description) continue;
+      if (isHiddenIn(rule, env, true)) continue;
       profiles.push({
         "@_typeId": ABILITY_TYPE_ID,
         "@_name": rule["@_name"] ?? link["@_name"] ?? "",
@@ -355,6 +384,7 @@ function ruleLinksToAbilityProfiles(
     } else if (linkType === "profile" && profileIndex) {
       const target = profileIndex.get(targetId);
       if (!target || target["@_typeId"] !== ABILITY_TYPE_ID) continue;
+      if (isHiddenIn(target, env, true)) continue;
       const chars = ensureArray(target.characteristics?.characteristic);
       const description = getCharacteristic(chars, "Description");
       if (!description) continue;
@@ -432,12 +462,14 @@ function collectAllProfiles(entry: any, ruleIndex?: Map<string, any>, profileInd
 function collectLinkedUnitProfiles(
   entry: any,
   profileIndex: Map<string, any>,
+  resolveEntry?: (id: string) => any,
 ): any[] {
   const found: any[] = [];
   const seen = new Set<string>();
-  const visit = (node: any): void => {
+  const followed = new Set<string>();
+  const visit = (node: any, viaLink: boolean): void => {
     if (Array.isArray(node)) {
-      node.forEach(visit);
+      node.forEach((n) => visit(n, viaLink));
       return;
     }
     if (!node || typeof node !== "object") return;
@@ -450,10 +482,31 @@ function collectLinkedUnitProfiles(
       seen.add(targetId);
       found.push(target);
     }
-    visit(node.selectionEntries?.selectionEntry);
-    visit(node.selectionEntryGroups?.selectionEntryGroup);
+    // A model entry reached through an entryLink (Cadian Shock Troops'
+    // troopers link to shared model entries) isn't part of the inline tree
+    // collectAllProfiles walked, so its own inline Unit profile counts too.
+    if (viaLink) {
+      for (const p of ensureArray(node.profiles?.profile)) {
+        if (p["@_typeId"] !== UNIT_PROFILE_TYPE_ID || !p["@_id"] || seen.has(p["@_id"])) continue;
+        seen.add(p["@_id"]);
+        found.push(p);
+      }
+    }
+    visit(node.selectionEntries?.selectionEntry, viaLink);
+    visit(node.selectionEntryGroups?.selectionEntryGroup, viaLink);
+    if (resolveEntry) {
+      for (const link of ensureArray(node.entryLinks?.entryLink)) {
+        const targetId = link["@_targetId"];
+        if (!targetId || followed.has(targetId)) continue;
+        const target = resolveEntry(targetId);
+        // Only model entries (and groups of them): never wander into shared weapon pools.
+        if (!target || target["@_type"] !== "model") continue;
+        followed.add(targetId);
+        visit(target, true);
+      }
+    }
   };
-  visit(entry);
+  visit(entry, false);
   return found;
 }
 
@@ -467,10 +520,15 @@ export function withLinkedUnitProfile(
   entry: any,
   profiles: any[],
   profileIndex?: Map<string, any>,
+  resolveEntry?: (id: string) => any,
 ): any[] {
   if (!profileIndex) return profiles;
-  if (profiles.some((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID)) return profiles;
-  const linked = collectLinkedUnitProfiles(entry, profileIndex);
+  const inlineNames = new Set(
+    profiles.filter((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID).map((p: any) => p["@_name"]),
+  );
+  const linked = collectLinkedUnitProfiles(entry, profileIndex, resolveEntry).filter(
+    (p: any) => !inlineNames.has(p["@_name"]),
+  );
   return linked.length ? [...profiles, ...linked] : profiles;
 }
 
@@ -648,7 +706,21 @@ function hasOwnInlineContent(node: any): boolean {
  * does, and without this exclusion each one was wrongly counted as its own
  * model — a single-model character computed to a 3-model unit.
  */
-function extractUnitSize(entry: any): UnitSize {
+function extractUnitSize(entry: any, ctx: UnitParseContext = {}): UnitSize {
+  const count = countUnitModels(entry, ctx);
+  if (count && count.max > 0) {
+    // An unbounded count (no max anywhere up the tree — rare, and a data
+    // gap rather than a real "any number") falls back to the composition's
+    // per-class floor, as extractComposition does.
+    const max = Number.isFinite(count.max)
+      ? count.max
+      : extractComposition(entry, ctx).reduce((sum, c) => sum + c.max, 0);
+    return { min: Math.max(1, count.min), max: Math.max(max, 1, count.min) };
+  }
+  return structuralUnitSize(entry);
+}
+
+function structuralUnitSize(entry: any): UnitSize {
   const children = [
     ...ensureArray(entry.selectionEntries?.selectionEntry),
     ...ensureArray(entry.selectionEntryGroups?.selectionEntryGroup),
@@ -673,6 +745,956 @@ function extractUnitSize(entry: any): UnitSize {
   return { min: totalMin, max: totalMax };
 }
 
+// === Conditional visibility (BattleScribe `hidden` modifiers) ===
+
+/**
+ * The selection context an entry is read in, for evaluating BattleScribe's
+ * conditional `hidden` modifiers. BSData shares one datasheet across every
+ * Space Marine chapter catalogue and switches chapter-specific content on or
+ * off with modifiers like "set hidden=true if the primary catalogue is not
+ * Black Templars" (Templar Vows, on every chapter's Captain), or "set
+ * hidden=true unless an ancestor is Boyz" on an option inside a shared
+ * weapon list. Ignoring those merged every chapter's rules into every copy.
+ *
+ * `ancestors` holds, outermost first, the ids (entry id, entryLink id, link
+ * targetId) and category ids of each enclosing selection entry — groups are
+ * not selections, so they aren't pushed.
+ */
+export type VisibilityEnv = {
+  primaryCatalogueId?: string;
+  ancestors?: Set<string>[];
+  /**
+   * Category ids some modifier can add to a selection at roster-build time
+   * (e.g. a Chaos "Mark of Khorne" upgrade adds the KHORNE category to its
+   * unit). An enclosing entry *lacking* one of these isn't conclusive, so a
+   * notInstanceOf check against it stays undecided.
+   */
+  dynamicCategoryIds?: Set<string>;
+};
+
+type Tri = boolean | null;
+
+function andTri(values: Tri[]): Tri {
+  if (values.some((v) => v === false)) return false;
+  if (values.some((v) => v === null)) return null;
+  return true;
+}
+
+function orTri(values: Tri[]): Tri {
+  if (values.some((v) => v === true)) return true;
+  if (values.some((v) => v === null)) return null;
+  return false;
+}
+
+/**
+ * Only `instanceOf`/`notInstanceOf` against the primary catalogue or an
+ * enclosing entry can be decided statically; every other condition (roster
+ * counts, points limits, detachment choice, ...) depends on a roster that
+ * doesn't exist here, so it is unknown (null).
+ */
+function evalCondition(condition: any, env: VisibilityEnv): Tri {
+  const type = condition["@_type"];
+  if (type !== "instanceOf" && type !== "notInstanceOf") return null;
+  const childId = condition["@_childId"];
+  if (!childId) return null;
+  const ancestors = env.ancestors ?? [];
+  let hit: boolean;
+  switch (condition["@_scope"]) {
+    case "primary-catalogue":
+      if (!env.primaryCatalogueId) return null;
+      hit = childId === env.primaryCatalogueId;
+      break;
+    case "ancestor":
+      if (ancestors.length === 0) return null;
+      hit = ancestors.some((a) => a.has(childId));
+      break;
+    case "root-entry":
+      if (ancestors.length === 0) return null;
+      hit = ancestors[0].has(childId);
+      break;
+    case "parent":
+      if (ancestors.length === 0) return null;
+      hit = ancestors[ancestors.length - 1].has(childId);
+      break;
+    default:
+      return null;
+  }
+  if (!hit && env.dynamicCategoryIds?.has(childId)) return null;
+  return type === "instanceOf" ? hit : !hit;
+}
+
+function evalConditionSet(node: any, env: VisibilityEnv, combine: "and" | "or"): Tri {
+  const values: Tri[] = [
+    ...ensureArray(node.conditions?.condition).map((c: any) => evalCondition(c, env)),
+    ...ensureArray(node.conditionGroups?.conditionGroup).map((g: any) =>
+      evalConditionSet(g, env, g["@_type"] === "or" ? "or" : "and"),
+    ),
+  ];
+  if (values.length === 0) return true;
+  return combine === "or" ? orTri(values) : andTri(values);
+}
+
+/** Every modifier on a node, each paired with whether its enclosing modifierGroups apply. */
+function allModifiers(node: any, env: VisibilityEnv): { modifier: any; groupApplies: Tri }[] {
+  const out: { modifier: any; groupApplies: Tri }[] = [];
+  const visit = (holder: any, groupApplies: Tri): void => {
+    for (const modifier of ensureArray(holder.modifiers?.modifier)) out.push({ modifier, groupApplies });
+    for (const group of ensureArray(holder.modifierGroups?.modifierGroup)) {
+      visit(group, andTri([groupApplies, evalConditionSet(group, env, group["@_type"] === "or" ? "or" : "and")]));
+    }
+  };
+  visit(node, true);
+  return out;
+}
+
+/**
+ * Whether `node` is hidden in this context. Only hides when certain: a
+ * hide-modifier whose conditions can't be decided is ignored, and an
+ * undecidable un-hide modifier on a base-hidden node is given the benefit of
+ * the doubt — the pre-existing behaviour for everything this can't evaluate.
+ * `ignoreBaseHidden` is for infoLink targets (shared rules/profiles), whose
+ * own `hidden` attribute this parser has never honoured — BSData sets it on
+ * rules like Templar Vows that are then shown conditionally by modifier.
+ */
+export function isHiddenIn(node: any, env: VisibilityEnv = {}, ignoreBaseHidden = false): boolean {
+  let hidden = !ignoreBaseHidden && node?.["@_hidden"] === "true";
+  for (const { modifier, groupApplies } of allModifiers(node, env)) {
+    if (modifier["@_field"] !== "hidden" || modifier["@_type"] !== "set") continue;
+    const applies = andTri([groupApplies, evalConditionSet(modifier, env, "and")]);
+    const value = String(modifier["@_value"]) === "true";
+    if (applies === true) hidden = value;
+    else if (applies === null && !value) hidden = false;
+  }
+  return hidden;
+}
+
+/**
+ * An entryLink and its target are one selection: the link's own `hidden` and
+ * modifiers apply to the target (a link can un-hide a base-hidden shared
+ * entry, or hide it in some catalogues), so both are evaluated together.
+ */
+export function isLinkHiddenIn(link: any, target: any, env: VisibilityEnv = {}): boolean {
+  if (!target) return isHiddenIn(link, env);
+  const merged = {
+    "@_hidden": link["@_hidden"] === "true" || target["@_hidden"] === "true" ? "true" : "false",
+    modifiers: { modifier: [...ensureArray(target.modifiers?.modifier), ...ensureArray(link.modifiers?.modifier)] },
+    modifierGroups: {
+      modifierGroup: [
+        ...ensureArray(target.modifierGroups?.modifierGroup),
+        ...ensureArray(link.modifierGroups?.modifierGroup),
+      ],
+    },
+  };
+  return isHiddenIn(merged, env);
+}
+
+// === Unit composition & wargear options ===
+
+/**
+ * Cross-catalogue context for parseEntryNode. `resolveEntry` looks a shared
+ * entry/group up by id (fetch-data.ts's global index) so entryLinks — how
+ * nearly every weapon option is referenced — can be followed;
+ * `primaryCatalogueId` is the catalogue the unit is being listed under, for
+ * chapter-/faction-conditional content (see VisibilityEnv).
+ */
+export type UnitParseContext = {
+  resolveEntry?: (id: string) => any;
+  profileIndex?: Map<string, any>;
+  primaryCatalogueId?: string;
+  dynamicCategoryIds?: Set<string>;
+};
+
+/**
+ * Option pools that aren't part of a datasheet's own wargear: matched-play
+ * Enhancements, the Warlord flag, Crusade-only upgrades (Weapon
+ * Modifications/Upgrades, Battle Honours, ...). Mirrors fetch-data.ts's
+ * UNIVERSAL_OPTION_POOL_LINK_NAME_PATTERN, plus "Weapon Upgrades" (the
+ * per-weapon Crusade upgrade list linked under every 11e weapon).
+ */
+const NON_WARGEAR_NAME_PATTERN =
+  /enhancement|warlord|crusade|weapon modifications?|weapon upgrades?|battle trait|battle scar|battle honours?|requisition|boons?/i;
+
+const MAX_WARGEAR_DEPTH = 10;
+
+/**
+ * A node's "selections"/parent range as BattleScribe means it: a missing min
+ * is 0 (optional) and a missing max is unbounded. (extractCountConstraint
+ * instead reads a lone bound as a fixed count, which suits its own callers.)
+ */
+function selectionRange(node: any): UnitSize | null {
+  let min: number | null = null;
+  let max: number | null = null;
+  for (const c of ensureArray(node?.constraints?.constraint)) {
+    if (c["@_field"] !== "selections" || c["@_scope"] !== "parent") continue;
+    const value = Number(c["@_value"]);
+    if (c["@_type"] === "min") min = value;
+    else if (c["@_type"] === "max") max = value;
+  }
+  if (min === null && max === null) return null;
+  return { min: min ?? 0, max: max ?? Infinity };
+}
+
+/** An entry, group, or entryLink with the link's target resolved and merged in. */
+type WNode = {
+  name: string;
+  kind: "entry" | "group";
+  /** The entry's own type ("model", "upgrade", "unit"); "" for groups. */
+  type: string;
+  ids: string[];
+  /** The entry/group itself, or the link's target (empty object if unresolved). */
+  node: any;
+  link: any | null;
+  /** "selections" count scoped to parent; the link's own constraints win. */
+  range: UnitSize | null;
+  defaultId: string | undefined;
+};
+
+function toWNode(raw: any, kind: "entry" | "group"): WNode {
+  return {
+    name: String(raw["@_name"] ?? "").trim(),
+    kind,
+    type: kind === "entry" ? (raw["@_type"] ?? "upgrade") : "",
+    ids: [raw["@_id"]].filter(Boolean),
+    node: raw,
+    link: null,
+    range: selectionRange(raw),
+    defaultId: raw["@_defaultSelectionEntryId"],
+  };
+}
+
+function linkToWNode(link: any, ctx: UnitParseContext): WNode {
+  const target = link["@_targetId"] ? ctx.resolveEntry?.(link["@_targetId"]) : undefined;
+  const kind = link["@_type"] === "selectionEntryGroup" ? "group" : "entry";
+  return {
+    name: String(link["@_name"] || target?.["@_name"] || "").trim(),
+    kind,
+    type: kind === "entry" ? (target?.["@_type"] ?? "upgrade") : "",
+    ids: [link["@_id"], link["@_targetId"], target?.["@_id"]].filter(Boolean),
+    node: target ?? {},
+    link,
+    range: selectionRange(link) ?? selectionRange(target),
+    defaultId: target?.["@_defaultSelectionEntryId"] ?? link["@_defaultSelectionEntryId"],
+  };
+}
+
+function ancestorSet(w: WNode): Set<string> {
+  const set = new Set(w.ids);
+  for (const holder of [w.node, w.link]) {
+    for (const cl of ensureArray(holder?.categoryLinks?.categoryLink)) {
+      if (cl["@_targetId"]) set.add(cl["@_targetId"]);
+    }
+  }
+  return set;
+}
+
+function withAncestor(env: VisibilityEnv, w: WNode): VisibilityEnv {
+  if (w.kind !== "entry") return env;
+  return { ...env, ancestors: [...(env.ancestors ?? []), ancestorSet(w)] };
+}
+
+function isWargearRelevant(w: WNode, env: VisibilityEnv): boolean {
+  if (NON_WARGEAR_NAME_PATTERN.test(w.name)) return false;
+  if (/crusade/i.test(String(w.node.comment ?? ""))) return false;
+  if (w.range && w.range.max === 0) return false;
+  const hidden = w.link ? isLinkHiddenIn(w.link, w.node, env) : isHiddenIn(w.node, env);
+  return !hidden;
+}
+
+/** Visible children (entries, groups, resolved entryLinks) of `w`, read in `env`. */
+function wChildren(w: WNode, ctx: UnitParseContext, env: VisibilityEnv): WNode[] {
+  const out: WNode[] = [];
+  for (const holder of w.link ? [w.node, w.link] : [w.node]) {
+    for (const e of ensureArray(holder.selectionEntries?.selectionEntry)) out.push(toWNode(e, "entry"));
+    for (const g of ensureArray(holder.selectionEntryGroups?.selectionEntryGroup)) out.push(toWNode(g, "group"));
+    for (const l of ensureArray(holder.entryLinks?.entryLink)) out.push(linkToWNode(l, ctx));
+  }
+  return out.filter((c) => isWargearRelevant(c, env));
+}
+
+function isModelNode(w: WNode): boolean {
+  return w.type === "model" || w.type === "unit";
+}
+
+function containsModels(w: WNode, ctx: UnitParseContext, env: VisibilityEnv, depth = 0): boolean {
+  if (depth > MAX_WARGEAR_DEPTH) return false;
+  const childEnv = withAncestor(env, w);
+  return wChildren(w, ctx, childEnv).some(
+    (c) => isModelNode(c) || containsModels(c, ctx, childEnv, depth + 1),
+  );
+}
+
+// --- Composition ---
+
+/**
+ * "Intercessor w/ Grenade Launcher" → "Intercessor"; "Boy with Big Shoota" →
+ * "Boy"; "Kataphron Destroyer (Heavy grav-cannon & Cognis flamer)" →
+ * "Kataphron Destroyer".
+ */
+function baseModelName(name: string): string {
+  return (
+    name
+      .replace(/\s+(?:w\/|with)\s.*$/i, "")
+      .replace(/\s*\([^)]*\)\s*$/, "")
+      .trim() || name
+  );
+}
+
+/** Name of the Unit profile a model entry carries (inline, or via a profile infoLink), if any. */
+function ownUnitProfileName(w: WNode, ctx: UnitParseContext): string | null {
+  const inline = ensureArray(w.node.profiles?.profile).find((p: any) => p["@_typeId"] === UNIT_PROFILE_TYPE_ID);
+  if (inline) return inline["@_name"] ?? null;
+  for (const holder of [w.node, w.link].filter(Boolean)) {
+    for (const link of ensureArray(holder.infoLinks?.infoLink)) {
+      if (link["@_type"] !== "profile") continue;
+      const target = ctx.profileIndex?.get(link["@_targetId"]);
+      if (target?.["@_typeId"] === UNIT_PROFILE_TYPE_ID) return target["@_name"] ?? null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Some datasheets name each trooper entry after its loadout alone — Chaos
+ * Terminators' "4 Terminators" group holds "Accursed weapon and
+ * combi-bolter", "Power fist and combi-weapon", ... (0-4 each) with no
+ * per-model profile. A group made up entirely of three or more such
+ * optional, unrelated-by-name model entries is one model type, named after
+ * their shared Unit profile or else the group ("4 Terminators" →
+ * "Terminators"); each loadout is then listed under it. A group that also
+ * holds a mandatory or same-named model, or a sub-group (Corsair
+ * Voidscarred's specialists sit beside a "Voidscarred" group), is left
+ * alone, as are distinctly-profiled specialists.
+ */
+function loadoutNamedSiblingClass(group: WNode, siblings: WNode[], ctx: UnitParseContext): Map<WNode, string> {
+  const renames = new Map<WNode, string>();
+  const models = siblings.filter((c) => c.type === "model");
+  const optional = models.filter((c) => !c.range || c.range.min === 0);
+  const baseNames = new Set(optional.map((c) => baseModelName(c.name).toLowerCase()));
+  if (optional.length < 3 || optional.length !== models.length || baseNames.size !== optional.length) return renames;
+  if (siblings.some((c) => c.kind === "group")) return renames;
+  const profileNames = new Set(optional.map((c) => ownUnitProfileName(c, ctx)));
+  if (profileNames.size > 1) return renames;
+  const name = [...profileNames][0] ?? group.name.replace(/^\d+(?:\s*-\s*\d+)?\s+/, "").trim();
+  if (!name) return renames;
+  for (const c of optional) renames.set(c, name);
+  return renames;
+}
+
+/** Class identity: case- and plural-insensitive ("Termagants" entry + "Termagant w/ Spike rifle" variants). */
+function classKey(model: string): string {
+  const lower = model.toLowerCase();
+  return lower.length > 3 && lower.endsWith("s") ? lower.slice(0, -1) : lower;
+}
+
+type ModelPlacement = { w: WNode; env: VisibilityEnv; groups: WNode[] };
+type ModelClass = { model: string; min: number; max: number; placements: ModelPlacement[] };
+type ModelCount = { classes: ModelClass[]; min: number; max: number };
+
+function mergeClasses(parts: ModelCount[]): ModelClass[] {
+  const byName = new Map<string, ModelClass>();
+  for (const part of parts) {
+    for (const c of part.classes) {
+      const key = classKey(c.model);
+      const existing = byName.get(key);
+      if (existing) {
+        existing.min += c.min;
+        existing.max += c.max;
+        existing.placements.push(...c.placements);
+      } else {
+        byName.set(key, { ...c, placements: [...c.placements] });
+      }
+    }
+  }
+  return [...byName.values()];
+}
+
+/**
+ * Model counts under `w`: a model entry is its own range (default exactly 1);
+ * a group sums its children, then clamps to its own constraint — BSData puts
+ * the unit's real size on the group ("Intercessors" 5-10) while the members
+ * carry looser per-entry ranges (Sergeant 1, Intercessor 4-9, Intercessor w/
+ * Grenade Launcher 0-2). Per-class ranges are clamped against the rest of
+ * the group the same way. Returns null when there are no models under `w`.
+ */
+function countModels(
+  w: WNode,
+  ctx: UnitParseContext,
+  env: VisibilityEnv,
+  groups: WNode[],
+  depth: number,
+  className?: string,
+): ModelCount | null {
+  if (depth > MAX_WARGEAR_DEPTH) return null;
+  if (w.type === "model") {
+    // No constraint of its own: optional and unbounded inside a constrained
+    // group (which then sets the count — Strike Squad's plain "Grey Knight"
+    // entry under "4-9 Grey Knights"), otherwise taken to be exactly one.
+    const range = w.range ?? (groups[groups.length - 1]?.range ? { min: 0, max: Infinity } : { min: 1, max: 1 });
+    return {
+      classes: [{ model: className ?? baseModelName(w.name), min: range.min, max: range.max, placements: [{ w, env, groups }] }],
+      min: range.min,
+      max: range.max,
+    };
+  }
+
+  const childEnv = withAncestor(env, w);
+  const childGroups = w.kind === "group" ? [...groups, w] : groups;
+  const children = wChildren(w, ctx, childEnv);
+  const renames = w.kind === "group" ? loadoutNamedSiblingClass(w, children, ctx) : new Map<WNode, string>();
+  const counted = children
+    .map((c) => ({ c, count: countModels(c, ctx, childEnv, childGroups, depth + 1, renames.get(c)) }))
+    .filter((x): x is { c: WNode; count: ModelCount } => x.count !== null);
+  if (counted.length === 0) return null;
+  const parts = counted.map((x) => x.count);
+
+  // A pick-one group whose children are whole-unit bundles ("Unit
+  // Composition": "1 Sergeant and 9 Shock Troopers" or "2 Sergeants and 18
+  // Shock Troopers") constrains how many bundles are picked, not models: the
+  // unit is one alternative or another.
+  const isBundle = (c: WNode): boolean => c.kind === "entry" && !isModelNode(c);
+  if (w.kind === "group" && w.range && w.range.max === 1 && counted.every((x) => isBundle(x.c))) {
+    return alternativeCounts(parts, w.range.min === 0);
+  }
+
+  // A bundle elsewhere (Cadian Recon Squad's optional two-model "Weapons
+  // Team" among single troopers) is picked a number of times, each pick
+  // adding its models.
+  const inGroup = w.kind === "group";
+  const picks = (c: WNode): UnitSize => c.range ?? (inGroup ? { min: 0, max: 1 } : { min: 1, max: 1 });
+  const scaled = counted.map(({ c, count }) => (isBundle(c) ? scaleCount(count, picks(c)) : count));
+  const classes = mergeClasses(scaled);
+  let min = scaled.reduce((sum, p) => sum + p.min, 0);
+  let max = scaled.reduce((sum, p) => sum + p.max, 0);
+  if (inGroup && w.range) {
+    // The group's constraint counts selections — a bundle pick is one
+    // selection however many models it brings — so clamp selections, then
+    // add back each bundle's extra models.
+    let selMin = 0;
+    let selMax = 0;
+    let extraMin = 0;
+    let extraMax = 0;
+    for (const { c, count } of counted) {
+      if (isBundle(c)) {
+        const r = picks(c);
+        selMin += r.min;
+        selMax += r.max;
+        extraMin += r.min * Math.max(count.min - 1, 0);
+        extraMax += r.max * Math.max(count.max - 1, 0);
+      } else {
+        selMin += count.min;
+        selMax += count.max;
+      }
+    }
+    min = Math.max(selMin, w.range.min) + extraMin;
+    max = Math.min(selMax, w.range.max) + extraMax;
+  }
+  for (const c of classes) {
+    const othersMin = classes.reduce((sum, o) => (o === c ? sum : sum + o.min), 0);
+    const othersMax = classes.reduce((sum, o) => (o === c ? sum : sum + o.max), 0);
+    c.max = Math.min(c.max, max - othersMin);
+    c.min = Math.max(c.min, min - othersMax, 0);
+    if (c.min > c.max) c.min = c.max;
+  }
+  return { classes, min, max };
+}
+
+/** One of several alternative bundles: each class ranges over what the alternatives give it. */
+function alternativeCounts(alternatives: ModelCount[], optional: boolean): ModelCount {
+  const names = new Map<string, ModelClass>();
+  for (const alt of alternatives) {
+    for (const c of alt.classes) {
+      const key = classKey(c.model);
+      if (!names.has(key)) names.set(key, { model: c.model, min: Infinity, max: 0, placements: [] });
+    }
+  }
+  for (const [key, cls] of names) {
+    for (const alt of alternatives) {
+      const match = alt.classes.find((c) => classKey(c.model) === key);
+      cls.min = Math.min(cls.min, match ? match.min : 0);
+      cls.max = Math.max(cls.max, match ? match.max : 0);
+      if (match) cls.placements.push(...match.placements);
+    }
+    if (optional) cls.min = 0;
+  }
+  return {
+    classes: [...names.values()],
+    min: optional ? 0 : Math.min(...alternatives.map((a) => a.min)),
+    max: Math.max(...alternatives.map((a) => a.max)),
+  };
+}
+
+function scaleCount(count: ModelCount, range: UnitSize): ModelCount {
+  return {
+    classes: count.classes.map((c) => ({ ...c, min: c.min * range.min, max: c.max * range.max })),
+    min: count.min * range.min,
+    max: count.max * range.max,
+  };
+}
+
+function rootWNode(entry: any): WNode {
+  return toWNode(entry, "entry");
+}
+
+function rootEnv(ctx: UnitParseContext): VisibilityEnv {
+  return { primaryCatalogueId: ctx.primaryCatalogueId, ancestors: [], dynamicCategoryIds: ctx.dynamicCategoryIds };
+}
+
+/**
+ * Every category id that some modifier adds to a selection ("add category"),
+ * across the given catalogue/game-system nodes — see
+ * VisibilityEnv.dynamicCategoryIds.
+ */
+export function collectDynamicCategoryIds(nodes: any[]): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: any): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    for (const m of ensureArray(node.modifiers?.modifier)) {
+      if (m["@_field"] === "category" && m["@_type"] === "add" && m["@_value"]) ids.add(String(m["@_value"]));
+    }
+    for (const value of Object.values(node)) {
+      if (value && typeof value === "object") visit(value);
+    }
+  };
+  nodes.forEach(visit);
+  return ids;
+}
+
+/**
+ * The unit's model classes. A "model"-typed root (a character or vehicle
+ * datasheet with no "unit" wrapper) is itself one model, plus any model
+ * children; a "unit"-typed root is purely its children. Null if the tree has
+ * no model-typed entries at all (the caller then falls back to the older
+ * structural heuristic in extractUnitSize).
+ */
+function countUnitModels(entry: any, ctx: UnitParseContext): ModelCount | null {
+  const root = rootWNode(entry);
+  const env = rootEnv(ctx);
+  const inner = countModels({ ...root, type: "unit" }, ctx, env, [], 0);
+  if (root.type !== "model") return inner;
+
+  const self: ModelClass = { model: root.name, min: 1, max: 1, placements: [{ w: root, env, groups: [] }] };
+  if (!inner) return { classes: [self], min: 1, max: 1 };
+  return { classes: [self, ...inner.classes], min: 1 + inner.min, max: 1 + inner.max };
+}
+
+/** Model types with min/max counts, e.g. Intercessor Sergeant 1 + Intercessor 4-9. */
+export function extractComposition(entry: any, ctx: UnitParseContext = {}): CompositionEntry[] {
+  const count = countUnitModels(entry, ctx);
+  if (!count) return [];
+  return count.classes
+    .filter((c) => c.max > 0)
+    .map((c) => ({ model: c.model, min: c.min, max: Number.isFinite(c.max) ? c.max : Math.max(c.min, 1) }));
+}
+
+// --- Wargear ---
+
+type LoadoutItem = { label: string; names: string[] };
+type Alt = { name: string; ids: string[]; loadout: Loadout | null; notes: string[] };
+type Choice = { label: string; min: number; max: number; def: number; alts: Alt[] };
+type Loadout = {
+  fixed: { name: string; count: number; notes: string[] }[];
+  optional: { name: string; max: number; notes: string[] }[];
+  choices: Choice[];
+};
+
+function emptyLoadout(): Loadout {
+  return { fixed: [], optional: [], choices: [] };
+}
+
+function isEmptyLoadout(lo: Loadout): boolean {
+  return lo.fixed.length === 0 && lo.optional.length === 0 && lo.choices.length === 0;
+}
+
+function mergeLoadout(into: Loadout, from: Loadout): void {
+  for (const f of from.fixed) addFixed(into, f.name, f.count, f.notes);
+  into.optional.push(...from.optional.filter((o) => !into.optional.some((x) => x.name === o.name)));
+  into.choices.push(...from.choices);
+}
+
+function addFixed(lo: Loadout, name: string, count: number, notes: string[]): void {
+  if (lo.fixed.some((f) => f.name === name)) return;
+  lo.fixed.push({ name, count, notes });
+}
+
+function hasOwnWeaponOrAbilityProfile(w: WNode): boolean {
+  return ensureArray(w.node.profiles?.profile).some((p: any) =>
+    [RANGED_WEAPON_TYPE_ID, MELEE_WEAPON_TYPE_ID, ABILITY_TYPE_ID].includes(p["@_typeId"]),
+  );
+}
+
+/** "5+ models" for a model-count condition (`selections` of "model" at least/greater than N), else null. */
+function modelCountThreshold(m: any): number | null {
+  const conditions = ensureArray(m.conditions?.condition);
+  if (conditions.length !== 1 || ensureArray(m.conditionGroups?.conditionGroup).length > 0) return null;
+  const c = conditions[0];
+  if (c["@_childId"] !== "model" || c["@_field"] !== "selections") return null;
+  const value = Number(c["@_value"]);
+  if (!Number.isFinite(value)) return null;
+  if (c["@_type"] === "atLeast" || c["@_type"] === "equalTo") return value;
+  if (c["@_type"] === "greaterThan") return value + 1;
+  return null;
+}
+
+/** "6 with 20+ models" for a modifier that raises constraint `constraint` once the unit is big enough. */
+function constraintScalingNote(holder: any, constraint: any, env: VisibilityEnv): string | null {
+  const base = Number(constraint["@_value"]);
+  for (const { modifier } of allModifiers(holder, env)) {
+    if (modifier["@_field"] !== constraint["@_id"]) continue;
+    const threshold = modelCountThreshold(modifier);
+    if (threshold === null) continue;
+    const value = Number(modifier["@_value"]);
+    if (modifier["@_type"] === "set") return `${value} with ${threshold}+ models`;
+    if (modifier["@_type"] === "increment") return `${base + value} with ${threshold}+ models`;
+  }
+  return null;
+}
+
+/** "+1 per 10 models": a modifier raising constraint `constraint` by `value` for every `per` models in the unit. */
+function perModelsIncrement(holder: any, constraint: any, env: VisibilityEnv): { value: number; per: number } | null {
+  for (const { modifier } of allModifiers(holder, env)) {
+    if (modifier["@_field"] !== constraint["@_id"] || modifier["@_type"] !== "increment") continue;
+    const repeat = ensureArray(modifier.repeats?.repeat)[0];
+    if (!repeat || repeat["@_childId"] !== "model") continue;
+    const per = Number(repeat["@_value"]);
+    const value = Number(modifier["@_value"]) * (Number(repeat["@_repeats"]) || 1);
+    if (Number.isFinite(per) && per > 0 && Number.isFinite(value)) return { value, per };
+  }
+  return null;
+}
+
+/**
+ * Per-unit limits on an option, as readable notes: a `selections` max scoped
+ * to the unit ("max 1 per unit"), any model-count scaling of it, and
+ * BSData's own validation text ("Max 1 {this} per 5 models").
+ */
+function limitNotes(w: WNode, env: VisibilityEnv): string[] {
+  const notes: string[] = [];
+  for (const holder of [w.link, w.node].filter(Boolean)) {
+    for (const c of ensureArray(holder.constraints?.constraint)) {
+      if (c["@_field"] !== "selections" || c["@_type"] !== "max" || c["@_scope"] !== "unit") continue;
+      const perModels = perModelsIncrement(holder, c, env);
+      if (perModels) {
+        const base = Number(c["@_value"]);
+        notes.push(
+          base === 0
+            ? `max ${perModels.value} per ${perModels.per} models`
+            : `max ${base} per unit, +${perModels.value} per ${perModels.per} models`,
+        );
+        continue;
+      }
+      const scaling = constraintScalingNote(holder, c, env);
+      notes.push(`max ${c["@_value"]} per unit${scaling ? `, ${scaling}` : ""}`);
+    }
+    for (const { modifier } of allModifiers(holder, env)) {
+      if (modifier["@_type"] !== "add" || modifier["@_field"] !== "error") continue;
+      const text = String(modifier["@_value"] ?? "").replace(/\{this\}/g, w.name).trim();
+      if (text) notes.push(text);
+    }
+  }
+  return [...new Set(notes)];
+}
+
+/**
+ * The options of a choice group. A sub-group among them is just more
+ * options — Battle Sisters' "Weapon" choice holds a "Special Weapons" and a
+ * "Heavy Weapons" list — so it's flattened into one list.
+ */
+function choiceAlternatives(group: WNode, ctx: UnitParseContext, env: VisibilityEnv, depth: number): WNode[] {
+  if (depth > MAX_WARGEAR_DEPTH) return [];
+  return wChildren(group, ctx, env)
+    .filter((a) => !isModelNode(a))
+    .flatMap((a) => (a.kind === "group" ? choiceAlternatives(a, ctx, env, depth + 1) : [a]));
+}
+
+function toAlt(w: WNode, ctx: UnitParseContext, env: VisibilityEnv, depth: number): Alt {
+  const notes = limitNotes(w, env);
+  if (w.kind === "group" || !hasOwnWeaponOrAbilityProfile(w)) {
+    const loadout = buildLoadout(w, ctx, env, depth + 1);
+    if (!isEmptyLoadout(loadout)) return { name: w.name, ids: w.ids, loadout, notes };
+  }
+  return { name: w.name, ids: w.ids, loadout: null, notes };
+}
+
+/**
+ * A model's (or loadout bundle's) wargear: mandatory items, optional items,
+ * and choice groups. A constrained group is a choice between its children —
+ * a weapon ("Weapon 1": Bolt Rifle or Hand flamer or ...) or a whole bundle
+ * (the Captain's "Wargear" group picks one of three named loadouts, each its
+ * own nested items and choices). An unconstrained group is just a folder
+ * ("Wargear") and is flattened. Model entries are skipped — they're
+ * composition, handled by countModels.
+ */
+function buildLoadout(w: WNode, ctx: UnitParseContext, env: VisibilityEnv, depth: number): Loadout {
+  const lo = emptyLoadout();
+  if (depth > MAX_WARGEAR_DEPTH) return lo;
+  const childEnv = withAncestor(env, w);
+  for (const c of wChildren(w, ctx, childEnv)) {
+    if (isModelNode(c) || containsModels(c, ctx, childEnv)) continue;
+
+    if (c.kind === "group") {
+      if (!c.range) {
+        mergeLoadout(lo, buildLoadout(c, ctx, childEnv, depth + 1));
+        continue;
+      }
+      const alts = choiceAlternatives(c, ctx, childEnv, depth).map((a) => toAlt(a, ctx, childEnv, depth + 1));
+      if (alts.length === 0) continue;
+      if (alts.length === 1 && c.range.min >= 1) {
+        const only = alts[0];
+        if (only.loadout) mergeLoadout(lo, only.loadout);
+        else addFixed(lo, only.name, c.range.min, only.notes);
+        continue;
+      }
+      const def = c.defaultId ? alts.findIndex((a) => a.ids.includes(c.defaultId!)) : -1;
+      lo.choices.push({ label: c.name, min: c.range.min, max: c.range.max, def, alts });
+      continue;
+    }
+
+    const notes = limitNotes(c, childEnv);
+    if (c.range && c.range.min === 0) {
+      lo.optional.push({ name: c.name, max: c.range.max, notes });
+      continue;
+    }
+    const sub = hasOwnWeaponOrAbilityProfile(c) ? null : buildLoadout(c, ctx, childEnv, depth + 1);
+    if (sub && !isEmptyLoadout(sub)) mergeLoadout(lo, sub);
+    else addFixed(lo, c.name, c.range?.min ?? 1, notes);
+  }
+  return lo;
+}
+
+function withNotes(name: string, notes: string[]): string {
+  return notes.length ? `${name} (${notes.join("; ")})` : name;
+}
+
+function joinOr(labels: string[]): string {
+  if (labels.length <= 1) return labels[0] ?? "";
+  if (labels.length === 2) return `${labels[0]} or ${labels[1]}`;
+  return `one of (${labels.join(", ")})`;
+}
+
+/**
+ * What an alternative gives: a single item, or a bundle's contents. Some
+ * bundles mark their own contents optional ("1 Blast pistol and 1 Power
+ * weapon", each 0-1), so those count too; failing all else, its name.
+ */
+function altItems(alt: Alt): LoadoutItem[] {
+  if (!alt.loadout) return [{ label: withNotes(alt.name, alt.notes), names: [alt.name] }];
+  const items = defaultItems(alt.loadout);
+  if (items.length > 0) return items;
+  const optional = alt.loadout.optional.map((o) => ({ label: o.name, names: [o.name] }));
+  return optional.length > 0 ? optional : [{ label: alt.name, names: [alt.name] }];
+}
+
+function altLabel(alt: Alt): string {
+  return altItems(alt)
+    .map((i) => i.label)
+    .join(" and ");
+}
+
+function altNames(alt: Alt): string[] {
+  return altItems(alt).flatMap((i) => i.names);
+}
+
+/** What the model carries if no option is taken. A choice with no default reads "A or B". */
+function defaultItems(lo: Loadout): LoadoutItem[] {
+  const items: LoadoutItem[] = lo.fixed.map((f) => ({
+    label: f.count > 1 ? `${f.count}x ${f.name}` : f.name,
+    names: [f.name],
+  }));
+  for (const ch of lo.choices) {
+    if (ch.def >= 0) {
+      items.push(...altItems(ch.alts[ch.def]));
+    } else if (ch.min >= 1 && ch.max === 1) {
+      items.push({ label: joinOr(ch.alts.map(altLabel)), names: ch.alts.flatMap(altNames) });
+    }
+  }
+  return items;
+}
+
+function optionLines(lo: Loadout): string[] {
+  const lines: string[] = [];
+  for (const ch of lo.choices) {
+    if (ch.max > 1) {
+      lines.push(`${ch.label}: choose ${rangeText({ min: ch.min, max: ch.max })} from: ${ch.alts.map(altLabel).join(", ")}`);
+      continue;
+    }
+    if (ch.def >= 0) {
+      const def = ch.alts[ch.def];
+      const others = ch.alts.filter((_, i) => i !== ch.def);
+      // Swapping one default item reads "X can be replaced with ..." even if
+      // some options are bundles ("Bolt Rifle and Astartes grenade
+      // launcher"); swapping a whole multi-item default loadout reads as
+      // alternative loadouts.
+      if (altItems(def).length <= 1) {
+        lines.push(
+          `${def.name} can be replaced with ${others.length > 1 ? "one of: " : ""}${others.map(altLabel).join(", ")}`,
+        );
+        continue;
+      }
+      const defItems = altItems(def);
+      for (const other of others) {
+        const otherItems = altItems(other);
+        const otherNames = new Set(otherItems.flatMap((i) => i.names));
+        const replaced = defItems.filter((i) => !i.names.some((n) => otherNames.has(n))).map((i) => i.label);
+        lines.push(
+          `Alternative loadout: ${otherItems.map((i) => i.label).join(", ")}${replaced.length ? ` (replaces ${replaced.join(", ")})` : ""}`,
+        );
+      }
+      if (def.loadout) lines.push(...optionLines(def.loadout));
+      continue;
+    }
+    // A mandatory choice with no default is already spelled out in the
+    // default loadout as "A or B" / "one of (A, B, C)".
+    if (ch.min >= 1) continue;
+    lines.push(`Optional ${ch.label}: ${ch.alts.length > 1 ? "one of " : ""}${ch.alts.map(altLabel).join(", ")}`);
+  }
+  if (lo.optional.length > 0) {
+    const items = lo.optional.map((o) =>
+      withNotes(o.max > 1 && Number.isFinite(o.max) ? `up to ${o.max}x ${o.name}` : o.name, o.notes),
+    );
+    lines.push(`Can also take: ${items.join(", ")}`);
+  }
+  return lines;
+}
+
+function rangeText(range: UnitSize | null): string {
+  if (!range) return "any number";
+  if (!Number.isFinite(range.max)) return range.min > 0 ? `${range.min}+` : "any number";
+  if (range.min === range.max) return `${range.max}`;
+  return range.min > 0 ? `${range.min}-${range.max}` : `up to ${range.max}`;
+}
+
+/** Limits on a sub-group a loadout variant sits in, e.g. Boyz' "Special Weapons: max 3 total, 6 with 20+ models". */
+function groupLimitNotes(
+  placement: ModelPlacement,
+  base: ModelPlacement,
+  ctx: UnitParseContext,
+  env: VisibilityEnv,
+): string[] {
+  const notes: string[] = [];
+  // Only groups of variants alone (Boyz' "Special Weapons"), not the squad
+  // group the base model also sits in ("9-18 Boyz").
+  const holdsBase = (g: WNode, depth = 0): boolean =>
+    depth <= MAX_WARGEAR_DEPTH &&
+    wChildren(g, ctx, env).some((c) => c.name === base.w.name || (c.kind === "group" && holdsBase(c, depth + 1)));
+  for (const g of placement.groups.filter((g) => !base.groups.includes(g) && !holdsBase(g))) {
+    if (!g.range || !Number.isFinite(g.range.max)) continue;
+    const holder = g.link ?? g.node;
+    const maxConstraint = ensureArray(holder.constraints?.constraint).find(
+      (c: any) => c["@_field"] === "selections" && c["@_scope"] === "parent" && c["@_type"] === "max",
+    );
+    const scaling = maxConstraint ? constraintScalingNote(holder, maxConstraint, env) : null;
+    notes.push(`${g.name}: max ${g.range.max} total${scaling ? `, ${scaling}` : ""}`);
+  }
+  return notes;
+}
+
+/**
+ * A loadout variant BSData models as its own model entry ("Intercessor w/
+ * Grenade Launcher", up to 2) read as an option on the base model: what it
+ * adds/swaps relative to the base loadout, and how many can take it.
+ */
+function variantOptionLine(
+  ctx: UnitParseContext,
+  className: string,
+  baseItems: LoadoutItem[],
+  base: ModelPlacement,
+  variant: ModelPlacement,
+  variantLoadout: Loadout,
+): string {
+  const variantItems = defaultItems(variantLoadout);
+  const baseLabels = new Set(baseItems.map((i) => i.label));
+  const variantLabels = new Set(variantItems.map((i) => i.label));
+  const added = variantItems.filter((i) => !baseLabels.has(i.label)).map((i) => i.label);
+  const removed = baseItems.filter((i) => !variantLabels.has(i.label)).map((i) => i.label);
+  const addedNotes = variantLoadout.fixed.filter((f) => added.includes(f.name)).flatMap((f) => f.notes);
+  const notes = [...new Set([...addedNotes, ...groupLimitNotes(variant, base, ctx, variant.env)])];
+
+  const max = variant.w.range?.max;
+  const who =
+    max === undefined || !Number.isFinite(max) ? `Any number of ${className} models` : `Up to ${max} ${className} model${max === 1 ? "" : "s"}`;
+  const swap =
+    added.length === 0
+      ? `can be equipped as ${variant.w.name}`
+      : removed.length > 0
+        ? `can each replace ${removed.join(" and ")} with ${added.join(" and ")}`
+        : `can each add ${added.join(" and ")}`;
+  return withNotes(`${who} ${swap}`, notes);
+}
+
+/**
+ * Default loadout and options for each model type in the unit (see
+ * ModelWargear). Loadout variants of a model type are folded into that
+ * type's options when it has a plain base entry (Intercessor + "Intercessor
+ * w/ Grenade Launcher"); otherwise (Devastator Marine w/ Boltgun / w/ Heavy
+ * Weapon, no plain one) each variant is listed with its own count.
+ */
+export function extractWargear(entry: any, ctx: UnitParseContext = {}): ModelWargear[] {
+  const count = countUnitModels(entry, ctx);
+  const root = rootWNode(entry);
+  const out: ModelWargear[] = [];
+  const push = (model: string, lo: Loadout, extraOptions: string[] = []): void => {
+    const def = defaultItems(lo).map((i) => i.label);
+    const options = [...optionLines(lo), ...extraOptions];
+    if (def.length === 0 && options.length === 0) return;
+    out.push({ model, default: def, options });
+  };
+
+  if (!count) {
+    // No model entries at all: whatever wargear hangs off the unit itself.
+    push(root.name, buildLoadout(root, ctx, rootEnv(ctx), 0));
+    return out;
+  }
+
+  for (const cls of count.classes) {
+    if (cls.max <= 0) continue;
+    // The same model entry can sit in several alternative bundles (Cadian
+    // Shock Troops' 10- and 20-model compositions both link "Shock
+    // Trooper"); list it once, with its largest count.
+    const byEntry = new Map<string, ModelPlacement>();
+    for (const p of cls.placements) {
+      const key = p.w.name.toLowerCase();
+      const seen = byEntry.get(key);
+      if (!seen || (p.w.range?.max ?? 0) > (seen.w.range?.max ?? 0)) byEntry.set(key, p);
+    }
+    const placements = [...byEntry.values()];
+    const loadouts = placements.map((p) => buildLoadout(p.w, ctx, p.env, 0));
+    if (placements.length === 1) {
+      push(placements[0].w.name, loadouts[0]);
+      continue;
+    }
+    // The base is the plainly-named entry ("Intercessor"), else the one its
+    // group selects by default (10e Boyz: "Boy w/ Slugga and choppa").
+    let baseIdx = placements.findIndex((p) => classKey(p.w.name) === classKey(cls.model));
+    if (baseIdx < 0) {
+      baseIdx = placements.findIndex((p) => {
+        const defaultId = p.groups[p.groups.length - 1]?.defaultId;
+        return defaultId !== undefined && p.w.ids.includes(defaultId);
+      });
+    }
+    if (baseIdx < 0) {
+      placements.forEach((p, i) => {
+        const range = p.w.range ?? { min: 0, max: cls.max };
+        push(`${p.w.name} (${rangeText({ min: range.min, max: Math.min(range.max, cls.max) })})`, loadouts[i]);
+      });
+      continue;
+    }
+    const base = placements[baseIdx];
+    const baseItems = defaultItems(loadouts[baseIdx]);
+    const variantLines: string[] = [];
+    placements.forEach((p, i) => {
+      if (i === baseIdx || p.w.name === base.w.name) return;
+      variantLines.push(variantOptionLine(ctx, cls.model, baseItems, base, p, loadouts[i]));
+      variantLines.push(...optionLines(loadouts[i]).map((line) => `${p.w.name}: ${line}`));
+    });
+    push(base.w.name, loadouts[baseIdx], variantLines);
+  }
+  return out;
+}
+
 // === Exported helpers for fetch-data.ts cross-catalogue resolution ===
 
 export { parser as xmlParser, ensureArray };
@@ -684,7 +1706,8 @@ export { parser as xmlParser, ensureArray };
 export function parseEntryNode(
   entry: any,
   faction: string,
-  allProfiles?: any[]
+  allProfiles?: any[],
+  context: UnitParseContext = {},
 ): Unit | null {
   const type = entry["@_type"];
   const hidden = entry["@_hidden"] === "true";
@@ -702,7 +1725,9 @@ export function parseEntryNode(
     meleeWeapons: extractMeleeWeapons(profiles),
     abilities: extractAbilities(profiles),
     points: extractPoints(entry),
-    unitSize: extractUnitSize(entry),
+    unitSize: extractUnitSize(entry, context),
+    composition: extractComposition(entry, context),
+    wargear: extractWargear(entry, context),
     gameSystem: "wh40k-10e" as const,
   };
 }
@@ -976,6 +2001,8 @@ export function parseCatalogue(xml: string): Unit[] {
         abilities: extractAbilities(allProfiles),
         points: extractPoints(entry),
         unitSize: extractUnitSize(entry),
+        composition: extractComposition(entry),
+        wargear: extractWargear(entry),
         gameSystem: "wh40k-10e" as const,
       };
     });

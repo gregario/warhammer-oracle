@@ -14,6 +14,10 @@ import {
   collectAllProfiles,
   buildProfileIndex,
   withLinkedUnitProfile,
+  extractComposition,
+  extractWargear,
+  isHiddenIn,
+  ruleLinksToAbilityProfiles,
   xmlParser,
 } from "./xml-parser.js";
 
@@ -216,6 +220,9 @@ describe("extractUnitSize", () => {
             <constraint type="min" value="4" field="selections" scope="parent"/>
             <constraint type="max" value="9" field="selections" scope="parent"/>
           </constraints>
+          <selectionEntries>
+            <selectionEntry id="m1" name="Legionary" type="model" hidden="false"/>
+          </selectionEntries>
         </selectionEntryGroup>
       </selectionEntryGroups>
     </selectionEntry>`;
@@ -1397,5 +1404,448 @@ describe("withLinkedUnitProfile: <infoLink type=\"profile\"> to a shared Unit st
 
     expect(unit!.profiles).toHaveLength(1);
     expect(unit!.profiles[0]).toMatchObject({ name: "Termagants", movement: '6"', toughness: "3" });
+  });
+});
+
+// === Unit composition & wargear options ===
+//
+// Fixtures mirror the BSData/wh40k-11e shapes they're named after, trimmed to
+// the structure that matters: model entries with "selections"/parent count
+// constraints, wargear choice groups with a defaultSelectionEntryId, and
+// shared weapon entries reached by entryLink.
+
+const SHARED_WEAPONS_XML = `<catalogue id="lib" name="Library">
+  <sharedSelectionEntries>
+    <selectionEntry id="w-hbp" name="Heavy Bolt Pistol" type="upgrade"><profiles><profile id="p-hbp" name="Heavy Bolt Pistol" typeId="f77d-b953-8fa4-b762"/></profiles></selectionEntry>
+    <selectionEntry id="w-mcb" name="Master-crafted bolter" type="upgrade"><profiles><profile id="p-mcb" name="Master-crafted bolter" typeId="f77d-b953-8fa4-b762"/></profiles></selectionEntry>
+    <selectionEntry id="w-pf" name="Power fist" type="upgrade"><profiles><profile id="p-pf" name="Power fist" typeId="8a40-4aaa-c780-9046"/></profiles></selectionEntry>
+    <selectionEntry id="w-mcpw" name="Master-crafted power weapon" type="upgrade"><profiles><profile id="p-mcpw" name="Master-crafted power weapon" typeId="8a40-4aaa-c780-9046"/></profiles></selectionEntry>
+    <selectionEntry id="w-shield" name="Relic Shield" type="upgrade"><profiles><profile id="p-shield" name="Relic Shield" typeId="9cc3-6d83-4dd3-9b64"/></profiles></selectionEntry>
+    <selectionEntry id="w-pp" name="Plasma pistol" type="upgrade"><profiles><profile id="p-pp" name="Plasma pistol" typeId="f77d-b953-8fa4-b762"/></profiles></selectionEntry>
+    <selectionEntry id="w-upgrades" name="Weapon Upgrades" type="upgrade" />
+  </sharedSelectionEntries>
+</catalogue>`;
+
+function sharedIndex(): Map<string, any> {
+  const lib = xmlParser.parse(SHARED_WEAPONS_XML).catalogue;
+  return new Map(lib.sharedSelectionEntries.selectionEntry.map((e: any) => [e["@_id"], e]));
+}
+
+const min1max1 = `<constraints>
+  <constraint type="min" value="1" field="selections" scope="parent"/>
+  <constraint type="max" value="1" field="selections" scope="parent"/>
+</constraints>`;
+
+describe("extractComposition / extractWargear: Space Marine Captain (loadout bundles)", () => {
+  // The Captain's "Wargear" group picks exactly one of three named loadouts;
+  // the default bundle has its own nested melee-weapon choice.
+  const xml = `<selectionEntry id="cap" name="Captain" type="model" hidden="false">
+    <profiles><profile id="p-cap" name="Captain" typeId="c547-1836-d8a-ff4f"/></profiles>
+    <selectionEntryGroups>
+      <selectionEntryGroup id="g-wargear" name="Wargear" defaultSelectionEntryId="b-default">
+        ${min1max1}
+        <selectionEntries>
+          <selectionEntry id="b-default" name="Heavy Bolt Pistol, Master-crafted Bolter, Melee Weapon" type="upgrade">
+            <selectionEntryGroups>
+              <selectionEntryGroup id="g-melee" name="Melee Weapon">
+                ${min1max1}
+                <entryLinks>
+                  <entryLink id="l-pf" name="Power fist" targetId="w-pf" type="selectionEntry"/>
+                  <entryLink id="l-mcpw" name="Master-crafted power weapon" targetId="w-mcpw" type="selectionEntry"/>
+                </entryLinks>
+              </selectionEntryGroup>
+            </selectionEntryGroups>
+            <entryLinks>
+              <entryLink id="l-hbp" name="Heavy Bolt Pistol" targetId="w-hbp" type="selectionEntry">${min1max1}
+                <entryLinks><entryLink id="l-up" name="Weapon Upgrades" targetId="w-upgrades" type="selectionEntryGroup"/></entryLinks>
+              </entryLink>
+              <entryLink id="l-mcb" name="Master-crafted bolter" targetId="w-mcb" type="selectionEntry">${min1max1}</entryLink>
+            </entryLinks>
+          </selectionEntry>
+          <selectionEntry id="b-shield" name="Heavy Bolt Pistol, Master-crafted power weapon and 1 Relic Shield" type="upgrade">
+            <entryLinks>
+              <entryLink id="l-mcpw2" name="Master-crafted power weapon" targetId="w-mcpw" type="selectionEntry">${min1max1}</entryLink>
+              <entryLink id="l-shield" name="Relic Shield" targetId="w-shield" type="selectionEntry">${min1max1}</entryLink>
+              <entryLink id="l-hbp2" name="Heavy Bolt Pistol" targetId="w-hbp" type="selectionEntry">${min1max1}</entryLink>
+            </entryLinks>
+          </selectionEntry>
+        </selectionEntries>
+      </selectionEntryGroup>
+    </selectionEntryGroups>
+    <entryLinks>
+      <entryLink id="l-enh" name="Enhancements" targetId="x" type="selectionEntryGroup"/>
+    </entryLinks>
+  </selectionEntry>`;
+  const entry = () => xmlParser.parse(xml).selectionEntry[0];
+  const index = sharedIndex();
+  const ctx = { resolveEntry: (id: string) => index.get(id) };
+
+  it("is a single model — its one-of-three Wargear group is not a second model slot (was computed as 2)", () => {
+    expect(extractUnitSize(entry(), ctx)).toEqual({ min: 1, max: 1 });
+    expect(extractUnitSize(entry())).toEqual({ min: 1, max: 1 });
+    expect(extractComposition(entry(), ctx)).toEqual([{ model: "Captain", min: 1, max: 1 }]);
+  });
+
+  it("reads the default loadout, with a no-default choice as 'A or B'", () => {
+    const [captain] = extractWargear(entry(), ctx);
+    expect(captain.model).toBe("Captain");
+    expect(captain.default).toEqual([
+      "Heavy Bolt Pistol",
+      "Master-crafted bolter",
+      "Power fist or Master-crafted power weapon",
+    ]);
+  });
+
+  it("offers the Relic Shield loadout as replacing the Master-crafted bolter", () => {
+    const [captain] = extractWargear(entry(), ctx);
+    expect(captain.options).toContain(
+      "Alternative loadout: Master-crafted power weapon, Relic Shield, Heavy Bolt Pistol (replaces Master-crafted bolter)",
+    );
+  });
+
+  it("skips Enhancements / Crusade weapon-upgrade pools", () => {
+    const text = JSON.stringify(extractWargear(entry(), ctx));
+    expect(text).not.toContain("Enhancements");
+    expect(text).not.toContain("Weapon Upgrades");
+  });
+});
+
+describe("extractComposition / extractWargear: Intercessor Squad (sergeant + troopers + loadout variant)", () => {
+  const xml = `<selectionEntry id="int" name="Intercessor Squad" type="unit" hidden="false">
+    <selectionEntryGroups>
+      <selectionEntryGroup id="g-int" name="Intercessors">
+        <constraints>
+          <constraint type="min" value="5" field="selections" scope="parent"/>
+          <constraint type="max" value="10" field="selections" scope="parent"/>
+        </constraints>
+        <selectionEntries>
+          <selectionEntry id="m-sgt" name="Intercessor Sergeant" type="model">
+            ${min1max1}
+            <selectionEntryGroups>
+              <selectionEntryGroup id="g-w1" name="Weapon 1" defaultSelectionEntryId="l-mcb-s">
+                ${min1max1}
+                <entryLinks>
+                  <entryLink id="l-pp-s" name="Plasma pistol" targetId="w-pp" type="selectionEntry"/>
+                  <entryLink id="l-mcb-s" name="Master-crafted bolter" targetId="w-mcb" type="selectionEntry"/>
+                </entryLinks>
+              </selectionEntryGroup>
+            </selectionEntryGroups>
+          </selectionEntry>
+          <selectionEntry id="m-int" name="Intercessor" type="model">
+            <constraints>
+              <constraint type="min" value="4" field="selections" scope="parent"/>
+              <constraint type="max" value="9" field="selections" scope="parent"/>
+            </constraints>
+            <entryLinks><entryLink id="l-mcb-i" name="Master-crafted bolter" targetId="w-mcb" type="selectionEntry">${min1max1}</entryLink></entryLinks>
+          </selectionEntry>
+          <selectionEntry id="m-gl" name="Intercessor w/ Grenade Launcher" type="model">
+            <constraints><constraint type="max" value="2" field="selections" scope="parent"/></constraints>
+            <entryLinks>
+              <entryLink id="l-mcb-g" name="Master-crafted bolter" targetId="w-mcb" type="selectionEntry">${min1max1}</entryLink>
+              <entryLink id="l-gl" name="Grenade Launcher" targetId="w-pp" type="selectionEntry">
+                <constraints>
+                  <constraint type="min" value="1" field="selections" scope="parent"/>
+                  <constraint type="max" value="1" field="selections" scope="parent"/>
+                  <constraint type="max" value="2" field="selections" scope="unit"/>
+                </constraints>
+              </entryLink>
+            </entryLinks>
+          </selectionEntry>
+        </selectionEntries>
+      </selectionEntryGroup>
+    </selectionEntryGroups>
+  </selectionEntry>`;
+  const entry = () => xmlParser.parse(xml).selectionEntry[0];
+  const index = sharedIndex();
+  const ctx = { resolveEntry: (id: string) => index.get(id) };
+
+  it("is 1 Intercessor Sergeant + 4-9 Intercessors (the Grenade Launcher variant folds into Intercessor), 5-10 total", () => {
+    expect(extractComposition(entry(), ctx)).toEqual([
+      { model: "Intercessor Sergeant", min: 1, max: 1 },
+      { model: "Intercessor", min: 4, max: 9 },
+    ]);
+    expect(extractUnitSize(entry(), ctx)).toEqual({ min: 5, max: 10 });
+  });
+
+  it("lists the sergeant's weapon swap and the Grenade Launcher variant as an option on Intercessor", () => {
+    const wargear = extractWargear(entry(), ctx);
+    expect(wargear.map((w) => w.model)).toEqual(["Intercessor Sergeant", "Intercessor"]);
+    expect(wargear[0]).toEqual({
+      model: "Intercessor Sergeant",
+      default: ["Master-crafted bolter"],
+      options: ["Master-crafted bolter can be replaced with Plasma pistol"],
+    });
+    expect(wargear[1].default).toEqual(["Master-crafted bolter"]);
+    expect(wargear[1].options).toEqual([
+      "Up to 2 Intercessor models can each add Grenade Launcher (max 2 per unit)",
+    ]);
+  });
+});
+
+describe("extractComposition: Ork Boyz (10-20, Boss Nob counted)", () => {
+  // "9-18 Boyz" bounds the plain Boy (6-18) plus a 0-3 "Special Weapons"
+  // sub-group of loadout variants; "1-2 Nobz" has no constraint of its own.
+  // The old structural count treated the Nobz wrapper as exactly 1 → 10-19.
+  const xml = `<selectionEntry id="boyz" name="Boyz" type="unit" hidden="false">
+    <selectionEntryGroups>
+      <selectionEntryGroup id="g-boyz" name="9-18 Boyz">
+        <constraints>
+          <constraint type="min" value="9" field="selections" scope="parent"/>
+          <constraint type="max" value="18" field="selections" scope="parent"/>
+        </constraints>
+        <selectionEntries>
+          <selectionEntry id="m-boy" name="Boy" type="model">
+            <constraints>
+              <constraint type="min" value="6" field="selections" scope="parent"/>
+              <constraint type="max" value="18" field="selections" scope="parent"/>
+            </constraints>
+          </selectionEntry>
+        </selectionEntries>
+        <selectionEntryGroups>
+          <selectionEntryGroup id="g-special" name="Special Weapons">
+            <constraints><constraint type="max" value="3" field="selections" scope="parent"/></constraints>
+            <selectionEntries>
+              <selectionEntry id="m-bs" name="Boy w/ Big shoota" type="model">
+                <constraints><constraint type="max" value="2" field="selections" scope="parent"/></constraints>
+              </selectionEntry>
+            </selectionEntries>
+          </selectionEntryGroup>
+        </selectionEntryGroups>
+      </selectionEntryGroup>
+      <selectionEntryGroup id="g-nobz" name="1-2 Nobz">
+        <selectionEntries>
+          <selectionEntry id="m-nob" name="Nob" type="model">
+            <constraints>
+              <constraint type="min" value="1" field="selections" scope="parent"/>
+              <constraint type="max" value="2" field="selections" scope="parent"/>
+            </constraints>
+          </selectionEntry>
+        </selectionEntries>
+      </selectionEntryGroup>
+    </selectionEntryGroups>
+  </selectionEntry>`;
+  const entry = () => xmlParser.parse(xml).selectionEntry[0];
+
+  it("is 9-18 Boy + 1-2 Nob = 10-20", () => {
+    expect(extractComposition(entry())).toEqual([
+      { model: "Boy", min: 9, max: 18 },
+      { model: "Nob", min: 1, max: 2 },
+    ]);
+    expect(extractUnitSize(entry())).toEqual({ min: 10, max: 20 });
+  });
+});
+
+describe("extractComposition: alternative whole-unit bundles (e.g. Cadian Shock Troops' 10 or 20)", () => {
+  const xml = `<selectionEntry id="cst" name="Cadian Shock Troops" type="unit" hidden="false">
+    <selectionEntryGroups>
+      <selectionEntryGroup id="g-comp" name="Unit Composition">
+        ${min1max1}
+        <selectionEntries>
+          <selectionEntry id="b-10" name="1 Shock Trooper Sergeant and 9 Shock Troopers" type="upgrade">
+            <selectionEntries>
+              <selectionEntry id="m-s1" name="Shock Trooper Sergeant" type="model">${min1max1}</selectionEntry>
+              <selectionEntry id="m-t1" name="Shock Trooper" type="model">
+                <constraints>
+                  <constraint type="min" value="9" field="selections" scope="parent"/>
+                  <constraint type="max" value="9" field="selections" scope="parent"/>
+                </constraints>
+              </selectionEntry>
+            </selectionEntries>
+          </selectionEntry>
+          <selectionEntry id="b-20" name="2 Shock Trooper Sergeants and 18 Shock Troopers" type="upgrade">
+            <selectionEntries>
+              <selectionEntry id="m-s2" name="Shock Trooper Sergeant" type="model">
+                <constraints>
+                  <constraint type="min" value="2" field="selections" scope="parent"/>
+                  <constraint type="max" value="2" field="selections" scope="parent"/>
+                </constraints>
+              </selectionEntry>
+              <selectionEntry id="m-t2" name="Shock Trooper" type="model">
+                <constraints>
+                  <constraint type="min" value="18" field="selections" scope="parent"/>
+                  <constraint type="max" value="18" field="selections" scope="parent"/>
+                </constraints>
+              </selectionEntry>
+            </selectionEntries>
+          </selectionEntry>
+        </selectionEntries>
+      </selectionEntryGroup>
+    </selectionEntryGroups>
+  </selectionEntry>`;
+
+  it("ranges over the alternatives instead of summing them (10-20, not 30)", () => {
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractUnitSize(entry)).toEqual({ min: 10, max: 20 });
+    expect(extractComposition(entry)).toEqual([
+      { model: "Shock Trooper Sergeant", min: 1, max: 2 },
+      { model: "Shock Trooper", min: 9, max: 18 },
+    ]);
+  });
+});
+
+describe("extractWargear: vehicle weapon options (e.g. Land Raider / Repulsor Executioner)", () => {
+  // An unconstrained "Wargear" folder holding mandatory weapons, 0-1 extras,
+  // and a turret choice with a default.
+  const xml = `<selectionEntry id="veh" name="Repulsor Executioner" type="model" hidden="false">
+    <selectionEntryGroups>
+      <selectionEntryGroup id="g-wg" name="Wargear">
+        <selectionEntryGroups>
+          <selectionEntryGroup id="g-turret" name="Turret Weapon" defaultSelectionEntryId="t-mpi">
+            ${min1max1}
+            <selectionEntries>
+              <selectionEntry id="t-hld" name="Heavy Laser Destroyer" type="upgrade"><profiles><profile id="p1" name="Heavy Laser Destroyer" typeId="f77d-b953-8fa4-b762"/></profiles></selectionEntry>
+              <selectionEntry id="t-mpi" name="Macro Plasma Incinerator" type="upgrade"><profiles><profile id="p2" name="Macro Plasma Incinerator" typeId="f77d-b953-8fa4-b762"/></profiles></selectionEntry>
+            </selectionEntries>
+          </selectionEntryGroup>
+        </selectionEntryGroups>
+        <selectionEntries>
+          <selectionEntry id="w-hull" name="Armoured Hull" type="upgrade">${min1max1}<profiles><profile id="p3" name="Armoured Hull" typeId="8a40-4aaa-c780-9046"/></profiles></selectionEntry>
+          <selectionEntry id="w-gl" name="Godhammer Lascannon" type="upgrade">
+            <constraints>
+              <constraint type="min" value="2" field="selections" scope="parent"/>
+              <constraint type="max" value="2" field="selections" scope="parent"/>
+            </constraints>
+            <profiles><profile id="p4" name="Godhammer Lascannon" typeId="f77d-b953-8fa4-b762"/></profiles>
+          </selectionEntry>
+          <selectionEntry id="w-hk" name="Hunter-killer missile" type="upgrade">
+            <constraints><constraint type="max" value="1" field="selections" scope="parent"/></constraints>
+            <profiles><profile id="p5" name="Hunter-killer missile" typeId="f77d-b953-8fa4-b762"/></profiles>
+          </selectionEntry>
+        </selectionEntries>
+      </selectionEntryGroup>
+    </selectionEntryGroups>
+  </selectionEntry>`;
+
+  it("separates default weapons, the turret swap, and optional extras", () => {
+    const entry = xmlParser.parse(xml).selectionEntry[0];
+    expect(extractWargear(entry)).toEqual([
+      {
+        model: "Repulsor Executioner",
+        default: ["Armoured Hull", "2x Godhammer Lascannon", "Macro Plasma Incinerator"],
+        options: [
+          "Macro Plasma Incinerator can be replaced with Heavy Laser Destroyer",
+          "Can also take: Hunter-killer missile",
+        ],
+      },
+    ]);
+  });
+});
+
+describe("isHiddenIn: catalogue- and ancestor-conditional visibility", () => {
+  const BLACK_TEMPLARS = "cat-bt";
+  // BSData's Templar Vows rule, shared by every chapter's datasheets: hidden
+  // unless the roster's primary catalogue is Black Templars.
+  const templarVows = {
+    "@_id": "r-vows",
+    "@_name": "Templar Vows",
+    "@_hidden": "true",
+    description: "Black Templars only.",
+    modifiers: {
+      modifier: [
+        {
+          "@_type": "set",
+          "@_field": "hidden",
+          "@_value": "true",
+          conditions: {
+            condition: [{ "@_type": "notInstanceOf", "@_scope": "primary-catalogue", "@_childId": BLACK_TEMPLARS }],
+          },
+        },
+      ],
+    },
+  };
+
+  it("hides a rule outside its catalogue and shows it inside (ignoring the rule's own base hidden flag, as before)", () => {
+    expect(isHiddenIn(templarVows, { primaryCatalogueId: "cat-sm" }, true)).toBe(true);
+    expect(isHiddenIn(templarVows, { primaryCatalogueId: BLACK_TEMPLARS }, true)).toBe(false);
+  });
+
+  it("does not hide on conditions it can't decide (no catalogue known, roster-dependent counts)", () => {
+    expect(isHiddenIn(templarVows, {}, true)).toBe(false);
+    const rosterDependent = {
+      modifiers: {
+        modifier: [
+          {
+            "@_type": "set",
+            "@_field": "hidden",
+            "@_value": "true",
+            conditions: { condition: [{ "@_type": "lessThan", "@_scope": "roster", "@_childId": "x" }] },
+          },
+        ],
+      },
+    };
+    expect(isHiddenIn(rosterDependent, { primaryCatalogueId: "cat-sm" })).toBe(false);
+  });
+
+  it("treats a missing category added by some modifier as undecided, but a present one as decided", () => {
+    const needsDaemonPrince = {
+      modifiers: {
+        modifier: [
+          {
+            "@_type": "set",
+            "@_field": "hidden",
+            "@_value": "true",
+            conditions: { condition: [{ "@_type": "notInstanceOf", "@_scope": "ancestor", "@_childId": "cat-dp" }] },
+          },
+        ],
+      },
+    };
+    expect(isHiddenIn(needsDaemonPrince, { ancestors: [new Set(["unit-1"])] })).toBe(true);
+    expect(isHiddenIn(needsDaemonPrince, { ancestors: [new Set(["unit-1", "cat-dp"])] })).toBe(false);
+    expect(
+      isHiddenIn(needsDaemonPrince, { ancestors: [new Set(["unit-1"])], dynamicCategoryIds: new Set(["cat-dp"]) }),
+    ).toBe(false);
+  });
+
+  it("drops a chapter-only rule infoLink from other chapters' copies of a shared datasheet", () => {
+    const entry = {
+      "@_type": "model",
+      infoLinks: { infoLink: [{ "@_type": "rule", "@_targetId": "r-vows", "@_name": "Templar Vows" }] },
+    };
+    const ruleIndex = new Map([["r-vows", templarVows]]);
+    expect(ruleLinksToAbilityProfiles(entry, ruleIndex, undefined, { primaryCatalogueId: "cat-sm" })).toEqual([]);
+    expect(ruleLinksToAbilityProfiles(entry, ruleIndex, undefined, { primaryCatalogueId: BLACK_TEMPLARS })).toHaveLength(1);
+  });
+});
+
+describe("unit profiles: every model's stat line", () => {
+  it("adds a linked Unit profile alongside an inline one (Ork Boyz: inline Nob, linked Boy)", () => {
+    const xml = `<catalogue id="c" name="Orks">
+      <sharedProfiles>
+        <profile id="prof-boy" name="Boy" typeId="c547-1836-d8a-ff4f"><characteristics><characteristic name="W">1</characteristic></characteristics></profile>
+      </sharedProfiles>
+      <sharedSelectionEntries>
+        <selectionEntry id="boyz" name="Boyz" type="unit">
+          <selectionEntries>
+            <selectionEntry id="m-boy" name="Boy" type="model">
+              <infoLinks><infoLink id="il" name="Boy" targetId="prof-boy" type="profile"/></infoLinks>
+            </selectionEntry>
+            <selectionEntry id="m-nob" name="Nob" type="model">
+              <profiles><profile id="prof-nob" name="Nob" typeId="c547-1836-d8a-ff4f"><characteristics><characteristic name="W">2</characteristic></characteristics></profile></profiles>
+            </selectionEntry>
+          </selectionEntries>
+        </selectionEntry>
+      </sharedSelectionEntries>
+    </catalogue>`;
+    const parsed = xmlParser.parse(xml);
+    const profileIndex = buildProfileIndex(parsed.catalogue);
+    const entry = parsed.catalogue.sharedSelectionEntries.selectionEntry[0];
+    const profiles = withLinkedUnitProfile(entry, collectAllProfiles(entry, new Map(), profileIndex), profileIndex);
+    const unit = parseEntryNode(entry, "Orks", profiles);
+    expect(unit!.profiles.map((p) => [p.name, p.wounds])).toEqual([
+      ["Nob", "2"],
+      ["Boy", "1"],
+    ]);
+  });
+
+  it("dedupes identical stat lines carried by each loadout-variant model entry", () => {
+    const profile = `<profiles><profile id="p" name="Intercessor" typeId="c547-1836-d8a-ff4f"><characteristics><characteristic name="W">2</characteristic></characteristics></profile></profiles>`;
+    const xml = `<selectionEntry id="u" name="Intercessor Squad" type="unit">
+      <selectionEntries>
+        <selectionEntry id="a" name="Intercessor" type="model">${profile}</selectionEntry>
+        <selectionEntry id="b" name="Intercessor w/ Grenade Launcher" type="model">${profile}</selectionEntry>
+      </selectionEntries>
+    </selectionEntry>`;
+    const unit = parseEntryNode(xmlParser.parse(xml).selectionEntry[0], "Space Marines");
+    expect(unit!.profiles).toHaveLength(1);
   });
 });

@@ -61,7 +61,7 @@ claude mcp add warhammer-oracle -- npx -y warhammer-oracle
 
 ### `lookup_unit`
 
-Look up a unit datasheet by name. Returns stat profiles, unit size (model count), ranged and melee weapons, abilities, and keywords.
+Look up a unit datasheet by name. Returns stat profiles, unit size (model count) and composition (how many of each model, e.g. 1 Intercessor Sergeant + 4-9 Intercessors), ranged and melee weapons, wargear options (each model's default loadout and what it can swap to or add), abilities, and keywords.
 
 ```
 "Look up the Intercessor Squad datasheet"

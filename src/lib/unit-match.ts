@@ -124,3 +124,53 @@ export function ambiguousFactionMatches<T extends NamedFactioned>(
 
   return [...options.values()];
 }
+
+export type AbilityVariantException = {
+  factions: string[];
+  /** Abilities this faction's copy has that the shown copy doesn't. */
+  gained: string[];
+  /** Abilities the shown copy has that this faction's copy doesn't. */
+  lost: string[];
+};
+
+/**
+ * Given the variants `ambiguousFactionMatches` returned, are they the same
+ * datasheet apart from abilities? BSData shares one datasheet across every
+ * Space Marine chapter and switches chapter rules on per catalogue — the
+ * Black Templars copy of an Intercessor Squad has Templar Vows where every
+ * other chapter's has Combat Doctrines — so a bare "Intercessor Squad" would
+ * otherwise force a twelve-way chapter question over one army rule. In that
+ * case, answer with the copy most factions share and name the exceptions.
+ * Variants that differ in anything else (stats, points, weapons, wargear —
+ * the Helbrute, the Sorcerer) stay a genuine ambiguity: returns null.
+ */
+export function resolveAbilityOnlyAmbiguity<T extends NamedFactioned & { abilities: { name: string }[] }>(
+  variants: T[],
+  contentOf: (item: T) => string,
+): { pick: T; exceptions: AbilityVariantException[] } | null {
+  const withoutAbilities = new Set(variants.map((v) => contentOf({ ...v, abilities: [] })));
+  if (withoutAbilities.size !== 1) return null;
+
+  const groups = new Map<string, T[]>();
+  for (const v of variants) {
+    const key = contentOf(v);
+    groups.set(key, [...(groups.get(key) ?? []), v]);
+  }
+  if (groups.size < 2) return null;
+
+  const ordered = [...groups.values()];
+  const largest = ordered.reduce((best, g) => (g.length > best.length ? g : best), ordered[0]);
+  const pick = largest[0];
+  const pickNames = new Set(pick.abilities.map((a) => a.name));
+  const exceptions = ordered
+    .filter((g) => g !== largest)
+    .map((g) => {
+      const names = new Set(g[0].abilities.map((a) => a.name));
+      return {
+        factions: g.map((v) => v.faction),
+        gained: [...names].filter((n) => !pickNames.has(n)),
+        lost: [...pickNames].filter((n) => !names.has(n)),
+      };
+    });
+  return { pick, exceptions };
+}
