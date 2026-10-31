@@ -387,6 +387,27 @@ Re-verified directly against the regenerated (reverted) data: "Champion of the C
 
 377/377 tests passing.
 
+## Follow-up (2026-10-31): unit composition, wargear options, and catalogue-conditional visibility
+
+Store-assistant questions the data couldn't answer: "what can my Captain take?", "how many Boyz in a unit?", "can my Intercessor Sergeant take a power fist?". `rangedWeapons`/`meleeWeapons` merge every weapon a unit could ever carry with no loadout information, and `unitSize` was only a min/max — with real bugs (every Space Marine Captain, and ~3,000 other characters/vehicles in each edition, came out as 2 models; Ork Boyz 10-19).
+
+**How BSData encodes it** (same schema in 10e XML and 11e JSON):
+- *Model counts* are `selections` constraints scoped to `parent`, on model entries **and on the groups holding them**. The group carries the real squad size (Intercessor Squad's "Intercessors" group: 5-10) while its members carry looser ranges (Sergeant 1, Intercessor 4-9, "Intercessor w/ Grenade Launcher" 0-2). A model entry with no constraint inside a constrained group is optional/unbounded (Strike Squad's plain "Grey Knight" under "4-9 Grey Knights").
+- *Loadout variants* are often separate model entries ("Boy w/ Big shoota", 0-2, in a 0-3 "Special Weapons" sub-group).
+- *Whole-unit alternatives* are a pick-one group of upgrade "bundles" (Cadian Shock Troops' "Unit Composition": "1 Sergeant and 9 Shock Troopers" or "2 Sergeants and 18"); the group's constraint counts bundles picked, not models.
+- *Wargear choices* are constrained groups with a `defaultSelectionEntryId` (pointing at an entry id, an entryLink id, or a link's target — or nothing: ~22% of 11e defaults dangle). Options are usually entryLinks to shared weapon entries. A choice can be between single weapons ("Weapon 1": Bolt Rifle / Hand flamer / ...) or whole bundles (the Captain's "Wargear": three named loadouts, the default one with its own nested melee choice). Unconstrained groups ("Wargear") are just folders; 0-N items are optional extras.
+- *Per-unit limits* are `selections` constraints scoped to `unit`, raised by modifiers ("set 2 if 20+ models", "+1 per 10 models" via `repeats`), plus `add error` modifiers carrying readable text ("Max 1 {this} per 5 models").
+- *Conditional visibility*: one datasheet is shared by every Space Marine chapter catalogue, and chapter-specific content is switched by `hidden` modifiers with `instanceOf`/`notInstanceOf` conditions — on the primary catalogue (Templar Vows: hidden unless Black Templars; Repulsor Executioner: hidden in Black Templars, who have their own) or on an enclosing entry/category (a shared drone list's Missile Drone: hidden unless the ancestor is a battlesuit).
+
+**What changed:**
+- `Unit.composition: CompositionEntry[]` and `Unit.wargear: ModelWargear[]` ([types.ts](../../src/types.ts)), built by `extractComposition`/`extractWargear` in `xml-parser.ts`, which follow entryLinks through fetch-data.ts's global index (`UnitParseContext`). Loadout variants fold into their base model (by name: "X w/ Y", "X (Y)", plural; or the group's default entry); wargear is readable text — `default: string[]`, `options: string[]` — rather than a rules engine.
+- `unitSize` is now derived from the same model count whenever the tree has model entries, falling back to the old structural heuristic only when it has none. Fixes the 2-model characters (their wargear choice group was counted as a model slot), Boyz 10-19 → 10-20, bundle alternatives (Cadians had summed to 30), and many squads that were 1.
+- `isHiddenIn`/`isLinkHiddenIn` evaluate `hidden` modifiers whose conditions are decidable statically (primary catalogue; enclosing entries and categories, treating categories some modifier can *add* as undecided) — and only ever hide on a definite answer. Applied to unit roots, root entryLinks, rule/profile infoLinks, and the profile walk. Removes 94 (11e) / 101 (10e) duplicate or not-available datasheet copies (the chaos *and* imperial Titan copies in every faction, Black Templars' second Repulsor Executioner, Deathwatch's Scout Squad, ...) and ~3,900 (11e) / ~4,600 (10e) merged-in ability entries across ~2,600 / ~3,200 datasheets (Templar Vows on every chapter, The Shadow of Chaos / Code Chivalric on allied copies, mark-of-Chaos abilities on non-Daemon-Princes).
+- `withLinkedUnitProfile` adds every model's linked Unit profile, not only when none was inline (Ork Boyz were missing the Boy stat line beside the inline Nob); identical stat rows are deduped.
+- `lookup_unit` gains "Unit Composition" and "Wargear Options" sections; `compare_units` a one-line composition. Because chapter copies now really differ (Black Templars' Intercessor Squad has Templar Vows), a bare "Intercessor Squad" would have become a 12-way chapter question; `resolveAbilityOnlyAmbiguity` answers with the copy most factions share and names the exceptions when variants differ *only* in abilities (anything else — the Helbrute, the Sorcerer — stays a disambiguation).
+
+**Not done / known gaps:** modifiers other than `hidden` aren't evaluated, so roster-dependent counts show their base value (Jakhals' second Dishonoured); dangling defaults read as "A or B"; Kill Team operatives are unchanged (no composition concept, and their per-operative weapon choices weren't investigated). Data size: the new fields add ~3.7 MB to each units file, but the visibility fixes remove more — `units-11e.ts` 34.3 → 33.0 MB, `units.ts` 36.1 → 33.7 MB. 467 tests passing.
+
 ---
 
 ## Why this doc exists

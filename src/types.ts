@@ -65,6 +65,35 @@ export type UnitSize = {
   max: number;
 };
 
+/**
+ * One model type in a unit and how many of it the unit can include, e.g.
+ * `{ model: "Intercessor Sergeant", min: 1, max: 1 }` plus
+ * `{ model: "Intercessor", min: 4, max: 9 }`. Loadout variants BSData models
+ * as separate entries ("Intercessor w/ Grenade Launcher", "Boy w/ Big
+ * shoota") are folded into their base model type; their weapon swaps are in
+ * `Unit.wargear` instead.
+ */
+export type CompositionEntry = {
+  model: string;
+  min: number;
+  max: number;
+};
+
+/**
+ * One model's wargear, as readable text rather than a rules engine: what it is
+ * equipped with by default, then each option the datasheet allows. A choice
+ * with no default in the data reads "A or B" / "one of (A, B, C)" in `default`.
+ *
+ * Example (Space Marine Captain):
+ *   default: ["Heavy Bolt Pistol", "Master-crafted bolter", "Power fist or Master-crafted power weapon"]
+ *   options: ["Alternative loadout: Master-crafted power weapon, Relic Shield, Heavy Bolt Pistol (replaces Master-crafted bolter)", ...]
+ */
+export type ModelWargear = {
+  model: string;
+  default: string[];
+  options: string[];
+};
+
 export type Unit = {
   id: string;
   name: string;
@@ -76,6 +105,10 @@ export type Unit = {
   abilities: Ability[];
   points: number | null;
   unitSize: UnitSize;
+  /** Model types and counts that make up the unit; sums to `unitSize`. */
+  composition: CompositionEntry[];
+  /** Default loadout and options per model type. Empty when the data has none. */
+  wargear: ModelWargear[];
   gameSystem: GameSystem;
 };
 

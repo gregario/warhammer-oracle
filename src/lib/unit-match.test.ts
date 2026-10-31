@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { ambiguousFactionMatches, datasheetContentKey, isCanonicalFaction, rankUnitMatches } from "./unit-match.js";
+import {
+  ambiguousFactionMatches,
+  datasheetContentKey,
+  isCanonicalFaction,
+  rankUnitMatches,
+  resolveAbilityOnlyAmbiguity,
+} from "./unit-match.js";
 
 // Trimmed-down stand-ins for `Unit` — rankUnitMatches only reads name/faction/keywords.
 const lemanRussAM = {
@@ -242,5 +248,36 @@ describe("ambiguousFactionMatches", () => {
     const contentOf = (u: (typeof units)[number]) => u.content;
     const matches = rankUnitMatches(units, "Great Unclean One", contentOf);
     expect(ambiguousFactionMatches(matches, "Great Unclean One", contentOf)).toHaveLength(2);
+  });
+});
+
+describe("resolveAbilityOnlyAmbiguity", () => {
+  const squad = (faction: string, abilities: string[], points = 85) => ({
+    name: "Intercessor Squad",
+    faction,
+    keywords: ["Infantry", "Adeptus Astartes"],
+    points,
+    abilities: abilities.map((name) => ({ name, description: `${name} text` })),
+  });
+
+  it("picks the copy most factions share and names the faction whose abilities differ", () => {
+    const variants = [
+      squad("Adeptus Astartes - Black Templars", ["Combat Doctrines", "Templar Vows"]),
+      squad("Adeptus Astartes - Space Marines", ["Combat Doctrines"]),
+      squad("Adeptus Astartes - Ultramarines", ["Combat Doctrines"]),
+    ];
+    const resolved = resolveAbilityOnlyAmbiguity(variants, datasheetContentKey);
+    expect(resolved?.pick.faction).toBe("Adeptus Astartes - Space Marines");
+    expect(resolved?.exceptions).toEqual([
+      { factions: ["Adeptus Astartes - Black Templars"], gained: ["Templar Vows"], lost: [] },
+    ]);
+  });
+
+  it("stays ambiguous when anything besides abilities differs (points, stats, weapons)", () => {
+    const variants = [
+      squad("Adeptus Astartes - Black Templars", ["Templar Vows"], 90),
+      squad("Adeptus Astartes - Space Marines", ["Combat Doctrines"], 85),
+    ];
+    expect(resolveAbilityOnlyAmbiguity(variants, datasheetContentKey)).toBeNull();
   });
 });

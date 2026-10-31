@@ -4,8 +4,14 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
-import { rankUnitMatches, ambiguousFactionMatches, datasheetContentKey } from "../lib/unit-match.js";
-import { formatModeStamp, formatUnitSize } from "../lib/format.js";
+import {
+  rankUnitMatches,
+  ambiguousFactionMatches,
+  datasheetContentKey,
+  resolveAbilityOnlyAmbiguity,
+} from "../lib/unit-match.js";
+import type { AbilityVariantException } from "../lib/unit-match.js";
+import { formatCompositionSection, formatModeStamp, formatUnitSize, formatWargearSection } from "../lib/format.js";
 import type {
   Unit,
   UnitProfile,
@@ -66,6 +72,10 @@ function formatUnit(unit: Unit): string {
     `# ${unit.name}\n\n**Faction:** ${unit.faction}${pointsStr} | **Unit Size:** ${formatUnitSize(unit.unitSize)}`,
   );
 
+  // Composition
+  const composition = formatCompositionSection(unit.composition, unit.unitSize);
+  if (composition) sections.push(composition);
+
   // Stats
   sections.push(`### Unit Profiles\n\n${formatStatsTable(unit.profiles)}`);
 
@@ -75,6 +85,10 @@ function formatUnit(unit: Unit): string {
 
   const melee = formatMeleeWeapons(unit.meleeWeapons);
   if (melee) sections.push(melee);
+
+  // Wargear options (which of the weapons above each model has by default, and what it can swap to)
+  const wargear = formatWargearSection(unit.wargear);
+  if (wargear) sections.push(wargear);
 
   // Abilities
   const abilities = formatAbilities(unit.abilities);
@@ -165,12 +179,26 @@ function formatFactionDisambiguation(
   );
 }
 
+function formatAbilityVariantNote(exceptions: AbilityVariantException[]): string {
+  const lines = exceptions.map((e) => {
+    const diffs = [
+      e.gained.length > 0 ? `also has ${e.gained.join(", ")}` : "",
+      e.lost.length > 0 ? `does not have ${e.lost.join(", ")}` : "",
+    ].filter(Boolean);
+    return `- ${e.factions.join(", ")}: ${diffs.join("; ")}`;
+  });
+  return (
+    `_Shown as most factions field it. Same datasheet, different abilities in:_\n${lines.join("\n")}\n` +
+    `_Re-run \`lookup_unit\` with \`faction\` for that version._`
+  );
+}
+
 // === Tool Registration ===
 
 export function registerLookupUnit(server: McpServer): void {
   server.tool(
     "lookup_unit",
-    "Look up a Warhammer 40K unit or Kill Team operative datasheet by name. Returns stats, weapons, abilities, and keywords.",
+    "Look up a Warhammer 40K unit or Kill Team operative datasheet by name. Returns stats, weapons, abilities, and keywords; for 40K units also the unit composition (how many of each model) and wargear options (default loadout and what each model can take).",
     {
       unit_name: z.string().describe("Name or partial name of the unit to search for"),
       faction: z
@@ -259,6 +287,17 @@ export function registerLookupUnit(server: McpServer): void {
       }
 
       const ambiguous = ambiguousFactionMatches(matches, unit_name, datasheetContentKey);
+      const abilityOnly = ambiguous ? resolveAbilityOnlyAmbiguity(ambiguous, datasheetContentKey) : null;
+      if (abilityOnly) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${formatModeStamp(gameSystem)}\n\n${formatUnit(abilityOnly.pick)}\n\n${formatAbilityVariantNote(abilityOnly.exceptions)}`,
+            },
+          ],
+        };
+      }
       if (ambiguous) {
         return {
           content: [

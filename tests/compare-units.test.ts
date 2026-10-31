@@ -115,4 +115,12 @@ describe("compare_units tool", () => {
     expect(text).toContain("Abaddon the Despoiler");
     expect(text).toContain("Haarken Worldclaimer");
   });
+  it("shows each multi-model unit's composition", async () => {
+    const result = await client.callTool({
+      name: "compare_units",
+      arguments: { units: ["Boyz", "Khorne Berzerkers"], game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("**Composition:** 9-18 Boy, 1-2 Nob");
+  });
 });

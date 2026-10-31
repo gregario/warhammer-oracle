@@ -249,7 +249,8 @@ describe("lookup_unit tool", () => {
     });
     const selectedText = (selected.content as Array<{ type: string; text: string }>)[0].text;
     expect(selectedText).toContain("### Unit Profiles");
-    expect(selectedText).toContain("The Shadow of Chaos");
+    expect(selectedText).toContain("Shadow Legion");
+    expect(selectedText).not.toContain("Plague Legions");
   });
 
   it("rejects an unknown datasheet ID instead of falling back to another datasheet", async () => {
@@ -272,5 +273,66 @@ describe("lookup_unit tool", () => {
     expect(text).toContain("### Unit Profiles");
     expect(text).toContain("Astra Militarum");
     expect(text).not.toContain("different stats");
+  });
+  it("shows the unit composition for a multi-model unit", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Intercessor Squad", faction: "Adeptus Astartes - Space Marines" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("### Unit Composition");
+    expect(text).toContain("- 1 Intercessor Sergeant");
+    expect(text).toContain("- 4-9 Intercessor");
+    expect(text).toContain("Total: 5-10 models");
+  });
+
+  it("shows wargear options: what a Captain can take", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Captain", faction: "Adeptus Astartes - Space Marines" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("**Unit Size:** 1 model");
+    expect(text).not.toContain("### Unit Composition");
+    expect(text).toContain("### Wargear Options");
+    expect(text).toContain("**Captain** — default: Heavy Bolt Pistol, Master-crafted bolter");
+    expect(text).toMatch(/- Alternative loadout: .*Relic Shield.*\(replaces Master-crafted bolter\)/);
+  });
+
+  it("shows both Ork Boy and Nob stat lines, and 10-20 models", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Boyz", faction: "Orks" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("**Unit Size:** 10-20 models");
+    expect(text).toContain("| Boy |");
+    expect(text).toContain("| Nob |");
+    expect(text).toContain("- 9-18 Boy");
+    expect(text).toContain("- 1-2 Nob");
+  });
+
+  it("answers a bare name when chapter copies differ only in army-rule abilities, naming the exception", async () => {
+    // Every Space Marine chapter fields the same Intercessor Squad; only the
+    // Black Templars copy adds Templar Vows.
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Intercessor Squad" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("### Unit Composition");
+    expect(text).not.toContain("Templar Vows**:");
+    expect(text).toContain("Adeptus Astartes - Black Templars: also has Templar Vows");
+  });
+
+  it("does not add composition/wargear sections to Kill Team operatives", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Space Marine Captain", game_mode: "kill_team" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[Mode: Kill Team]");
+    expect(text).not.toContain("### Unit Composition");
+    expect(text).not.toContain("### Wargear Options");
   });
 });
