@@ -9,7 +9,8 @@
   },
   "type": "module",
   "bin": {
-    "warhammer-oracle-11e": "dist/index.js"
+    "warhammer-oracle-11e": "dist/index.js",
+    "warhammer-oracle-http": "dist/http.js"
   },
   "files": [
     "dist",
@@ -17,9 +18,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
+    "build": "tsc && node -e \"const fs=require('fs'); fs.chmodSync('dist/index.js', 0o755); fs.chmodSync('dist/http.js', 0o755)\"",
+    "build:docker": "tsc --noCheck --declaration false --declarationMap false --sourceMap false && node -e \"const fs=require('fs'); fs.chmodSync('dist/index.js', 0o755); fs.chmodSync('dist/http.js', 0o755)\"",
     "prepare": "npm run build",
     "dev": "tsx src/index.ts",
+    "dev:http": "tsx src/http.ts",
+    "start:http": "node dist/http.js",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
