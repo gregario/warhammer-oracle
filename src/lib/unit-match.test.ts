@@ -7,6 +7,7 @@ import {
   pickUnitMatch,
   rankUnitMatches,
   rankUnitMatchesWithFactionHint,
+  matchUnitsWithFactionHint,
 } from "./unit-match.js";
 
 // Trimmed-down stand-ins for `Unit` — rankUnitMatches only reads name/faction/keywords.
@@ -287,6 +288,19 @@ describe("rankUnitMatchesWithFactionHint / pickUnitMatch", () => {
   it("uses a leading faction word as a filter", () => {
     expect(rankUnitMatchesWithFactionHint(units, "Ork Boyz")[0].name).toBe("Boyz");
     expect(rankUnitMatchesWithFactionHint(units, "Space Marine Intercessors")[0].name).toBe("Intercessor Squad");
+  });
+
+  it("splits at the faction name it names best, not the unit name it names best", () => {
+    const gk = [
+      { name: "Knight Paladin", faction: "Grey Knights", keywords: ["Imperial Knights"] },
+      { name: "Paladin Squad", faction: "Grey Knights", keywords: ["Grey Knights"] },
+      { name: "Knight Paladin", faction: "Imperial Knights", keywords: ["Imperial Knights"] },
+    ];
+    // "Grey" + "Knight Paladins" names Knight Paladin better, but "Grey Knight" names the army.
+    expect(rankUnitMatchesWithFactionHint(gk, "Grey Knight Paladins")[0].name).toBe("Paladin Squad");
+    expect(matchUnitsWithFactionHint(gk, "Grey Knight Paladin").query).toBe("paladin");
+    expect(rankUnitMatchesWithFactionHint(gk, "Knight Paladin")[0].name).toBe("Knight Paladin");
+    expect(rankUnitMatchesWithFactionHint(gk, "Imperial Knight Paladin")[0].faction).toBe("Imperial Knights");
   });
 
   it("leaves a name that starts with a faction word alone", () => {

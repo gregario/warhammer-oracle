@@ -169,35 +169,56 @@ export function homeFactionRank(entry: NamedFactioned): 0 | 1 | 2 {
  * "Ork Boyz" → "Boyz" within Orks, "Space Marine Intercessors" → "Intercessors"
  * within the Space Marine catalogues. People (and voice assistants) often say
  * the army before the unit; the plain ranking only gets those by luck (a loose
- * substring) or not at all. Whichever reading names its top match better wins;
- * ties go to the plain ranking, so a name that really starts with a faction
- * word ("Necron Warriors") is unaffected.
+ * substring) or not at all.
+ *
+ * Of the leading word spans that name a faction, the one that names it best
+ * is the faction: "Grey Knight Paladins" splits as "Grey Knight" + "Paladins"
+ * (Paladin Squad), not "Grey" + "Knight Paladins" (the Imperial Knight that
+ * Grey Knights take as allies), even though the second split names its unit
+ * better. That reading is then used if it names its top match better than the
+ * plain ranking does; ties go to the plain ranking, so a name that really
+ * starts with a faction word ("Necron Warriors") is unaffected.
+ *
+ * Returns the matches and the query they were ranked against (the remaining
+ * words for a faction-hinted reading), for callers that score the top match.
  */
+export function matchUnitsWithFactionHint<T extends NamedFactioned>(
+  units: T[],
+  query: string,
+  contentOf: (item: T) => string = () => "",
+): { matches: T[]; query: string } {
+  const best = (matches: T[], q: string) => (matches.length > 0 ? scoreName(q, matches[0].name) : 0);
+  const plain = { matches: rankUnitMatches(units, query, contentOf), query };
+  const plainScore = best(plain.matches, query);
+  if (plainScore >= 1) return plain;
+
+  const tokens = normalizeName(query).split(" ");
+  const factions = [...new Set(units.map((u) => u.faction))];
+  let hinted: { matches: T[]; query: string; prefixScore: number; score: number } | null = null;
+  for (let i = 1; i < tokens.length; i++) {
+    const prefix = tokens.slice(0, i).join(" ");
+    const rest = tokens.slice(i).join(" ");
+    const prefixScores = factions.map((f) => scoreName(prefix, f));
+    const prefixScore = Math.max(...prefixScores);
+    if (prefixScore < 0.6) continue;
+    const pool = new Set(factions.filter((_, j) => prefixScores[j] >= 0.6));
+    const matches = rankUnitMatches(units.filter((u) => pool.has(u.faction)), rest, contentOf);
+    const score = best(matches, rest);
+    if (score === 0) continue;
+    if (!hinted || prefixScore > hinted.prefixScore || (prefixScore === hinted.prefixScore && score > hinted.score)) {
+      hinted = { matches, query: rest, prefixScore, score };
+    }
+  }
+  return hinted && hinted.score > plainScore ? { matches: hinted.matches, query: hinted.query } : plain;
+}
+
+/** `matchUnitsWithFactionHint`'s matches alone. */
 export function rankUnitMatchesWithFactionHint<T extends NamedFactioned>(
   units: T[],
   query: string,
   contentOf: (item: T) => string = () => "",
 ): T[] {
-  const best = (matches: T[], q: string) => (matches.length > 0 ? scoreName(q, matches[0].name) : 0);
-  let out = rankUnitMatches(units, query, contentOf);
-  let outScore = best(out, query);
-  if (outScore >= 1) return out;
-
-  const tokens = normalizeName(query).split(" ");
-  const factions = [...new Set(units.map((u) => u.faction))];
-  for (let i = 1; i < tokens.length; i++) {
-    const prefix = tokens.slice(0, i).join(" ");
-    const rest = tokens.slice(i).join(" ");
-    const hinted = factions.filter((f) => scoreName(prefix, f) >= 0.6);
-    if (hinted.length === 0) continue;
-    const matches = rankUnitMatches(units.filter((u) => hinted.includes(u.faction)), rest, contentOf);
-    const score = best(matches, rest);
-    if (score > outScore) {
-      out = matches;
-      outScore = score;
-    }
-  }
-  return out;
+  return matchUnitsWithFactionHint(units, query, contentOf).matches;
 }
 
 /**
