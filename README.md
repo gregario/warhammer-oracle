@@ -59,7 +59,7 @@ claude mcp add warhammer-oracle -- npx -y warhammer-oracle
 
 ### HTTP / Cloud Run
 
-The default `warhammer-oracle-11e` binary uses stdio for local MCP clients. For remote hosting, the package also includes a Streamable HTTP entry point:
+The default `warhammer-oracle` binary uses stdio for local MCP clients. For remote hosting, the package also includes a Streamable HTTP entry point:
 
 ```bash
 npm run build

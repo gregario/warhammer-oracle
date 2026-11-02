@@ -9,6 +9,7 @@
   },
   "type": "module",
   "bin": {
+    "warhammer-oracle": "dist/index.js",
     "warhammer-oracle-11e": "dist/index.js",
     "warhammer-oracle-http": "dist/http.js"
   },
