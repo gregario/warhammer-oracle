@@ -164,6 +164,75 @@ export function homeFactionRank(entry: NamedFactioned): 0 | 1 | 2 {
   return 0;
 }
 
+export type HomeDatasheetResolution<T> = {
+  /** The home copy of the shared datasheet: what to show. */
+  pick: T;
+  /** Other factions whose copy is identical to `pick`. */
+  alsoFieldedBy: string[];
+  /** Each remaining variant (one representative per distinct content) with the factions fielding it. */
+  variants: { entry: T; factions: string[] }[];
+};
+
+/**
+ * Given the variants `ambiguousFactionMatches` returned for a query with **no
+ * faction filter**, is one of them clearly the datasheet a bare name means?
+ *
+ * BSData shares a datasheet across every catalogue that may field it (the
+ * Bloodletters datasheet sits in eight Chaos catalogues; the Space Marine Land
+ * Raider in all twelve chapter catalogues), and separately a few armies carry
+ * their own same-named variant (World Eaters' summoned Blood Legions
+ * Bloodletters, the Grey Knights Land Raider). Asking "which army?" there is
+ * noise: the user means the shared datasheet, from its home catalogue.
+ *
+ * Resolves only when the answer is lopsided:
+ * - the most widely fielded datasheet family (same content apart from
+ *   abilities, which catalogues switch per army) contains an identifiable
+ *   home copy (`homeFactionRank` > 0), and
+ * - it is fielded by at least twice as many factions as every other family
+ *   combined.
+ *
+ * So the Sorcerer (one Chaos Space Marines datasheet shared by three
+ * catalogues, plus separate Thousand Sons and Emperor's Children datasheets)
+ * stays a genuine ambiguity, as do the Chaos Rhino/Helbrute families where
+ * each Legion has its own version and anything with no identifiable home.
+ * Callers must not use this when the user supplied a faction: same-faction
+ * variants (the two Death Guard Great Unclean Ones) are a real choice. The
+ * caller is expected to surface `variants`, which may differ in stats,
+ * weapons or points.
+ */
+export function resolveHomeDatasheet<T extends NamedFactioned>(
+  variants: T[],
+  contentOf: (item: T) => string,
+): HomeDatasheetResolution<T> | null {
+  const groupBy = (keyOf: (v: T) => string) => {
+    const groups = new Map<string, T[]>();
+    for (const v of variants) groups.set(keyOf(v), [...(groups.get(keyOf(v)) ?? []), v]);
+    return [...groups.values()];
+  };
+  const factionsOf = (g: T[]) => [...new Set(g.map((v) => v.faction))];
+
+  // Dominance is judged per datasheet *family*: content apart from abilities.
+  // Catalogues switch army rules on per copy (the home Chaos Daemons copy carries
+  // The Shadow of Chaos, its imports don't), which must not split the family.
+  const families = groupBy((v) => contentOf({ ...v, abilities: [] }));
+  const best = families.reduce((a, b) => (factionsOf(b).length > factionsOf(a).length ? b : a));
+  const otherCount = families.filter((f) => f !== best).reduce((n, f) => n + factionsOf(f).length, 0);
+  if (factionsOf(best).length < 2 * otherCount) return null;
+
+  const pick = best.reduce((a, b) => (homeFactionRank(b) > homeFactionRank(a) ? b : a));
+  if (homeFactionRank(pick) === 0) return null;
+
+  // Report by full content, so ability-only differences are still surfaced.
+  const groups = groupBy(contentOf);
+  if (groups.length < 2) return null;
+  const pickGroup = groups.find((g) => g.includes(pick))!;
+  return {
+    pick,
+    alsoFieldedBy: factionsOf(pickGroup).filter((f) => f !== pick.faction),
+    variants: groups.filter((g) => g !== pickGroup).map((g) => ({ entry: g[0], factions: factionsOf(g) })),
+  };
+}
+
 /**
  * Rank `units` for `query`, also trying a leading faction word as a filter:
  * "Ork Boyz" → "Boyz" within Orks, "Space Marine Intercessors" → "Intercessors"
@@ -222,16 +291,22 @@ export function rankUnitMatchesWithFactionHint<T extends NamedFactioned>(
 }
 
 /**
- * The single datasheet a non-interactive caller (compare_units) should use,
- * given `rankUnitMatches` output: the top match, preferring an identical copy
- * from its home catalogue so the faction shown is the unit's own rather than
- * data-file order's first (Black Templars, alphabetically).
+ * The single datasheet a non-interactive caller (compare_units) should use for
+ * `query`, given `rankUnitMatches` output: the home-army copy when
+ * `resolveHomeDatasheet` settles a cross-faction ambiguity, otherwise the
+ * top match, preferring an identical copy from its home catalogue so the
+ * faction shown is the unit's own rather than data-file order's first
+ * (Black Templars, alphabetically).
  */
 export function pickUnitMatch<T extends NamedFactioned>(
   matches: T[],
+  query: string,
   contentOf: (item: T) => string,
 ): T | undefined {
   if (matches.length === 0) return undefined;
+  const ambiguous = ambiguousFactionMatches(matches, query, contentOf);
+  const home = ambiguous ? resolveHomeDatasheet(ambiguous, contentOf) : null;
+  if (home) return home.pick;
   const top = matches[0];
   const same = matches.filter(
     (m) => normalizeName(m.name) === normalizeName(top.name) && contentOf(m) === contentOf(top),

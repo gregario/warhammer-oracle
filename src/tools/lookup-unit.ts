@@ -9,7 +9,9 @@ import {
   matchUnitsWithFactionHint,
   ambiguousFactionMatches,
   datasheetContentKey,
+  resolveHomeDatasheet,
 } from "../lib/unit-match.js";
+import type { HomeDatasheetResolution } from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
@@ -170,6 +172,103 @@ function formatFactionDisambiguation(
   );
 }
 
+/** "Adeptus Astartes - Ultramarines" → "Ultramarines"; short enough to read aloud. */
+function shortFaction(faction: string): string {
+  return faction.replace(/^Adeptus Astartes - /, "");
+}
+
+function listFactions(factions: string[]): string {
+  const names = factions.map(shortFaction);
+  if (names.length <= 3) return names.join(", ");
+  return `${names.slice(0, 2).join(", ")} and ${names.length - 2} others`;
+}
+
+const STAT_FIELDS: [keyof UnitProfile, string][] = [
+  ["movement", "M"],
+  ["toughness", "T"],
+  ["save", "Sv"],
+  ["wounds", "W"],
+  ["leadership", "Ld"],
+  ["objectiveControl", "OC"],
+];
+
+/** Weapon names whose profile differs, or that only one copy has (case-insensitive name match). */
+function differingWeapons<W extends { name: string }>(a: W[], b: W[]): string[] {
+  const key = (w: W) => JSON.stringify({ ...w, name: w.name.toLowerCase() });
+  const aKeys = new Set(a.map(key));
+  const bKeys = new Set(b.map(key));
+  const names = new Map<string, string>();
+  for (const w of [...a.filter((x) => !bKeys.has(key(x))), ...b.filter((x) => !aKeys.has(key(x)))]) {
+    names.set(w.name.toLowerCase(), names.get(w.name.toLowerCase()) ?? w.name);
+  }
+  return [...names.values()];
+}
+
+/** Material differences of `other` from the shown datasheet: points, size, stats, then weapons. Terse, for reading aloud. */
+function materialDifferences(shown: Unit, other: Unit): string[] {
+  const parts: string[] = [];
+  if (other.points !== shown.points) parts.push(other.points === null ? "no points listed" : `${other.points} pts`);
+  if (JSON.stringify(other.unitSize) !== JSON.stringify(shown.unitSize)) parts.push(formatUnitSize(other.unitSize));
+  if (other.profiles.length === shown.profiles.length) {
+    const stats = new Set<string>();
+    other.profiles.forEach((p, i) => {
+      for (const [field, label] of STAT_FIELDS) {
+        if (p[field] !== shown.profiles[i][field]) stats.add(`${label} ${p[field]}`);
+      }
+    });
+    parts.push(...stats);
+  } else {
+    parts.push("different stat lines");
+  }
+  if (parts.length > 0) return parts;
+  const weapons = differingWeapons(
+    [...shown.rangedWeapons, ...shown.meleeWeapons],
+    [...other.rangedWeapons, ...other.meleeWeapons],
+  );
+  return weapons.length > 0 ? ["different weapons"] : [];
+}
+
+function abilityChanges(shown: Unit, other: Unit): { lost: string[]; gained: string[] } {
+  const shownNames = new Set(shown.abilities.map((a) => a.name));
+  const otherNames = new Set(other.abilities.map((a) => a.name));
+  return {
+    lost: [...shownNames].filter((n) => !otherNames.has(n)),
+    gained: [...otherNames].filter((n) => !shownNames.has(n)),
+  };
+}
+
+/** A short summary of what `other` changes relative to the shown datasheet. */
+function describeDifferences(shown: Unit, other: Unit): string {
+  const material = materialDifferences(shown, other);
+  if (material.length > 0) return material.join(", ");
+  const { lost, gained } = abilityChanges(shown, other);
+  if (lost.length + gained.length === 0) return "different keywords";
+  if (lost.length + gained.length > 2) return "different abilities";
+  return [...(gained.length ? [`with ${gained.join(", ")}`] : []), ...(lost.length ? [`without ${lost.join(", ")}`] : [])].join(", ");
+}
+
+/**
+ * e.g. "Home: Chaos Daemons. Also fielded by 7 other armies. Variant: World Eaters (90 pts, OC 1)."
+ * Copies that only lack the home army's own rules count as fielding the same datasheet.
+ */
+function formatHomeDatasheetNote(resolution: HomeDatasheetResolution<Unit>): string {
+  const pick = resolution.pick;
+  const sameSheet = (v: { entry: Unit }) => {
+    if (materialDifferences(pick, v.entry).length > 0) return false;
+    const { gained } = abilityChanges(pick, v.entry);
+    return gained.length === 0 && JSON.stringify(v.entry.keywords) === JSON.stringify(pick.keywords);
+  };
+  const also = [...resolution.alsoFieldedBy, ...resolution.variants.filter(sameSheet).flatMap((v) => v.factions)];
+  const variants = resolution.variants.filter((v) => !sameSheet(v));
+  const lines = [`Home: ${shortFaction(pick.faction)}.`];
+  if (also.length > 0) lines.push(`Also fielded by ${also.length} other ${also.length === 1 ? "army" : "armies"}.`);
+  if (variants.length > 0) {
+    const others = variants.map((v) => `${listFactions(v.factions)} (${describeDifferences(pick, v.entry)})`);
+    lines.push(`${variants.length === 1 ? "Variant" : "Variants"}: ${others.join("; ")}.`);
+  }
+  return `**Note:** ${lines.join(" ")}`;
+}
+
 // === Tool Registration ===
 
 export function registerLookupUnit(server: McpServer): void {
@@ -265,6 +364,19 @@ export function registerLookupUnit(server: McpServer): void {
       }
 
       const ambiguous = ambiguousFactionMatches(matches, query, datasheetContentKey);
+      // With no faction given, a datasheet shared by most armies answers directly
+      // from its home army; a faction filter means same-faction variants are a real choice.
+      const home = ambiguous && !faction && !datasheet_id ? resolveHomeDatasheet(ambiguous, datasheetContentKey) : null;
+      if (home) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${formatModeStamp(gameSystem)}\n\n${formatUnit(home.pick)}\n\n${formatHomeDatasheetNote(home)}`,
+            },
+          ],
+        };
+      }
       if (ambiguous) {
         return {
           content: [

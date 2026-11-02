@@ -158,7 +158,9 @@ function resolveNames<T extends { id: string; name: string; faction: string; key
   const shownBy = new Map<string, string>();
   for (const name of names) {
     const matches = rankUnitMatchesWithFactionHint(pool, name, datasheetContentKey);
-    const pick = pickUnitMatch(matches, datasheetContentKey);
+    // Judge ambiguity against the matched name: compare_units must pick one
+    // datasheet even when the request was a loose "Intercessors".
+    const pick = pickUnitMatch(matches, matches[0]?.name ?? name, datasheetContentKey);
     if (!pick) {
       notFound.push(name);
       continue;
