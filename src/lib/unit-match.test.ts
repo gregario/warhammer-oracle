@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { ambiguousFactionMatches, datasheetContentKey, isCanonicalFaction, rankUnitMatches } from "./unit-match.js";
+import {
+  ambiguousFactionMatches,
+  datasheetContentKey,
+  homeFactionRank,
+  isCanonicalFaction,
+  pickUnitMatch,
+  rankUnitMatches,
+  rankUnitMatchesWithFactionHint,
+  matchUnitsWithFactionHint,
+} from "./unit-match.js";
 
 // Trimmed-down stand-ins for `Unit` — rankUnitMatches only reads name/faction/keywords.
 const lemanRussAM = {
@@ -242,5 +251,66 @@ describe("ambiguousFactionMatches", () => {
     const contentOf = (u: (typeof units)[number]) => u.content;
     const matches = rankUnitMatches(units, "Great Unclean One", contentOf);
     expect(ambiguousFactionMatches(matches, "Great Unclean One", contentOf)).toHaveLength(2);
+  });
+});
+
+describe("homeFactionRank", () => {
+  it("ranks the canonical catalogue and a chapter's own units highest", () => {
+    expect(homeFactionRank({ name: "x", faction: "Grey Knights", keywords: ["Grey Knights"] })).toBe(2);
+    expect(
+      homeFactionRank({ name: "x", faction: "Adeptus Astartes - Space Wolves", keywords: ["Adeptus Astartes", "Space Wolves"] }),
+    ).toBe(2);
+  });
+
+  it("recognises catalogues whose faction keyword differs from their name", () => {
+    expect(homeFactionRank({ name: "x", faction: "Chaos Daemons", keywords: ["Legiones Daemonica"] })).toBe(1);
+    expect(homeFactionRank({ name: "x", faction: "Adeptus Astartes - Space Marines", keywords: ["Adeptus Astartes"] })).toBe(1);
+  });
+
+  it("does not treat an import as home", () => {
+    expect(homeFactionRank({ name: "x", faction: "World Eaters", keywords: ["Legiones Daemonica"] })).toBe(0);
+    expect(homeFactionRank({ name: "x", faction: "Adeptus Astartes - Ultramarines", keywords: ["Adeptus Astartes"] })).toBe(0);
+    // Heretic Astartes is shared by every Chaos Legion, so it cannot vouch for Chaos Space Marines.
+    expect(homeFactionRank({ name: "x", faction: "Chaos Space Marines", keywords: ["Heretic Astartes"] })).toBe(0);
+  });
+});
+
+describe("rankUnitMatchesWithFactionHint / pickUnitMatch", () => {
+  const units = [
+    { name: "Boyz", faction: "Orks", keywords: ["Orks"] },
+    { name: "Beast Snagga Boyz", faction: "Orks", keywords: ["Orks"] },
+    { name: "Necron Warriors", faction: "Necrons", keywords: ["Necrons"] },
+    { name: "Assault Intercessors with Jump Packs", faction: "Adeptus Astartes - Black Templars", keywords: ["Adeptus Astartes"] },
+    { name: "Intercessor Squad", faction: "Adeptus Astartes - Black Templars", keywords: ["Adeptus Astartes"] },
+    { name: "Intercessor Squad", faction: "Adeptus Astartes - Space Marines", keywords: ["Adeptus Astartes"] },
+  ];
+
+  it("uses a leading faction word as a filter", () => {
+    expect(rankUnitMatchesWithFactionHint(units, "Ork Boyz")[0].name).toBe("Boyz");
+    expect(rankUnitMatchesWithFactionHint(units, "Space Marine Intercessors")[0].name).toBe("Intercessor Squad");
+  });
+
+  it("splits at the faction name it names best, not the unit name it names best", () => {
+    const gk = [
+      { name: "Knight Paladin", faction: "Grey Knights", keywords: ["Imperial Knights"] },
+      { name: "Paladin Squad", faction: "Grey Knights", keywords: ["Grey Knights"] },
+      { name: "Knight Paladin", faction: "Imperial Knights", keywords: ["Imperial Knights"] },
+    ];
+    // "Grey" + "Knight Paladins" names Knight Paladin better, but "Grey Knight" names the army.
+    expect(rankUnitMatchesWithFactionHint(gk, "Grey Knight Paladins")[0].name).toBe("Paladin Squad");
+    expect(matchUnitsWithFactionHint(gk, "Grey Knight Paladin").query).toBe("paladin");
+    expect(rankUnitMatchesWithFactionHint(gk, "Knight Paladin")[0].name).toBe("Knight Paladin");
+    expect(rankUnitMatchesWithFactionHint(gk, "Imperial Knight Paladin")[0].faction).toBe("Imperial Knights");
+  });
+
+  it("leaves a name that starts with a faction word alone", () => {
+    expect(rankUnitMatchesWithFactionHint(units, "Necron Warriors")[0].name).toBe("Necron Warriors");
+  });
+
+  it("ranks Intercessors to the Intercessor Squad and picks its home copy", () => {
+    const matches = rankUnitMatchesWithFactionHint(units, "Intercessors");
+    const pick = pickUnitMatch(matches, () => "");
+    expect(pick?.name).toBe("Intercessor Squad");
+    expect(pick?.faction).toBe("Adeptus Astartes - Space Marines");
   });
 });

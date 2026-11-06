@@ -4,7 +4,12 @@ import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
 import { fuzzySearch } from "../lib/search.js";
-import { rankUnitMatches, ambiguousFactionMatches, datasheetContentKey } from "../lib/unit-match.js";
+import {
+  rankUnitMatches,
+  matchUnitsWithFactionHint,
+  ambiguousFactionMatches,
+  datasheetContentKey,
+} from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
@@ -242,7 +247,8 @@ export function registerLookupUnit(server: McpServer): void {
       }
       if (datasheet_id) candidates = candidates.filter((unit) => unit.id === datasheet_id);
 
-      const matches = rankUnitMatches(candidates, unit_name, datasheetContentKey);
+      // "Grey Knight Paladins" → Paladin Squad: a leading army name narrows the search.
+      const { matches, query } = matchUnitsWithFactionHint(candidates, unit_name, datasheetContentKey);
 
       if (matches.length === 0) {
         const suggestion = faction
@@ -258,7 +264,7 @@ export function registerLookupUnit(server: McpServer): void {
         };
       }
 
-      const ambiguous = ambiguousFactionMatches(matches, unit_name, datasheetContentKey);
+      const ambiguous = ambiguousFactionMatches(matches, query, datasheetContentKey);
       if (ambiguous) {
         return {
           content: [

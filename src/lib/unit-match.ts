@@ -1,4 +1,4 @@
-import { normalizeName, rankByName } from "./search.js";
+import { normalizeName, rankByName, scoreName } from "./search.js";
 
 type NamedFactioned = {
   name: string;
@@ -123,4 +123,118 @@ export function ambiguousFactionMatches<T extends NamedFactioned>(
   if (contents.size < 2) return null;
 
   return [...options.values()];
+}
+
+/**
+ * Catalogues whose own units carry a faction keyword that is not the
+ * catalogue name. Keyed and valued by `normalizeName` form.
+ *
+ * Deliberately short: only add a catalogue whose keyword is unique to it.
+ * "Heretic Astartes" is *not* here: Death Guard, Thousand Sons, World Eaters
+ * and Emperor's Children units carry it too, so it cannot vouch for the Chaos
+ * Space Marines catalogue.
+ */
+const HOME_CATALOGUE_KEYWORDS: Record<string, string> = {
+  "chaos daemons": "legiones daemonica",
+  "adeptus astartes space marines": "adeptus astartes",
+};
+
+const CHAPTER_CATALOGUE_PREFIX = "adeptus astartes ";
+
+/**
+ * How sure are we that this copy lives in its datasheet's home catalogue
+ * rather than one that imports it? 2: the catalogue name is the unit's own
+ * faction keyword (`isCanonicalFaction`) or, for a Space Marine chapter
+ * catalogue ("Adeptus Astartes - Space Wolves"), its chapter keyword.
+ * 1: the catalogue's known faction keyword differs from its name (Chaos
+ * Daemons' units are LEGIONES DAEMONICA; generic Space Marine units are
+ * ADEPTUS ASTARTES in "Adeptus Astartes - Space Marines", which every chapter
+ * catalogue imports). 0: not identifiably home.
+ */
+export function homeFactionRank(entry: NamedFactioned): 0 | 1 | 2 {
+  if (isCanonicalFaction(entry)) return 2;
+  const faction = normalizeName(entry.faction);
+  const keywords = entry.keywords.map(normalizeName);
+  if (faction.startsWith(CHAPTER_CATALOGUE_PREFIX)) {
+    const chapter = faction.slice(CHAPTER_CATALOGUE_PREFIX.length);
+    if (chapter !== "space marines" && keywords.includes(chapter)) return 2;
+  }
+  const keyword = HOME_CATALOGUE_KEYWORDS[faction];
+  if (keyword !== undefined && keywords.includes(keyword)) return 1;
+  return 0;
+}
+
+/**
+ * Rank `units` for `query`, also trying a leading faction word as a filter:
+ * "Ork Boyz" → "Boyz" within Orks, "Space Marine Intercessors" → "Intercessors"
+ * within the Space Marine catalogues. People (and voice assistants) often say
+ * the army before the unit; the plain ranking only gets those by luck (a loose
+ * substring) or not at all.
+ *
+ * Of the leading word spans that name a faction, the one that names it best
+ * is the faction: "Grey Knight Paladins" splits as "Grey Knight" + "Paladins"
+ * (Paladin Squad), not "Grey" + "Knight Paladins" (the Imperial Knight that
+ * Grey Knights take as allies), even though the second split names its unit
+ * better. That reading is then used if it names its top match better than the
+ * plain ranking does; ties go to the plain ranking, so a name that really
+ * starts with a faction word ("Necron Warriors") is unaffected.
+ *
+ * Returns the matches and the query they were ranked against (the remaining
+ * words for a faction-hinted reading), for callers that score the top match.
+ */
+export function matchUnitsWithFactionHint<T extends NamedFactioned>(
+  units: T[],
+  query: string,
+  contentOf: (item: T) => string = () => "",
+): { matches: T[]; query: string } {
+  const best = (matches: T[], q: string) => (matches.length > 0 ? scoreName(q, matches[0].name) : 0);
+  const plain = { matches: rankUnitMatches(units, query, contentOf), query };
+  const plainScore = best(plain.matches, query);
+  if (plainScore >= 1) return plain;
+
+  const tokens = normalizeName(query).split(" ");
+  const factions = [...new Set(units.map((u) => u.faction))];
+  let hinted: { matches: T[]; query: string; prefixScore: number; score: number } | null = null;
+  for (let i = 1; i < tokens.length; i++) {
+    const prefix = tokens.slice(0, i).join(" ");
+    const rest = tokens.slice(i).join(" ");
+    const prefixScores = factions.map((f) => scoreName(prefix, f));
+    const prefixScore = Math.max(...prefixScores);
+    if (prefixScore < 0.6) continue;
+    const pool = new Set(factions.filter((_, j) => prefixScores[j] >= 0.6));
+    const matches = rankUnitMatches(units.filter((u) => pool.has(u.faction)), rest, contentOf);
+    const score = best(matches, rest);
+    if (score === 0) continue;
+    if (!hinted || prefixScore > hinted.prefixScore || (prefixScore === hinted.prefixScore && score > hinted.score)) {
+      hinted = { matches, query: rest, prefixScore, score };
+    }
+  }
+  return hinted && hinted.score > plainScore ? { matches: hinted.matches, query: hinted.query } : plain;
+}
+
+/** `matchUnitsWithFactionHint`'s matches alone. */
+export function rankUnitMatchesWithFactionHint<T extends NamedFactioned>(
+  units: T[],
+  query: string,
+  contentOf: (item: T) => string = () => "",
+): T[] {
+  return matchUnitsWithFactionHint(units, query, contentOf).matches;
+}
+
+/**
+ * The single datasheet a non-interactive caller (compare_units) should use,
+ * given `rankUnitMatches` output: the top match, preferring an identical copy
+ * from its home catalogue so the faction shown is the unit's own rather than
+ * data-file order's first (Black Templars, alphabetically).
+ */
+export function pickUnitMatch<T extends NamedFactioned>(
+  matches: T[],
+  contentOf: (item: T) => string,
+): T | undefined {
+  if (matches.length === 0) return undefined;
+  const top = matches[0];
+  const same = matches.filter(
+    (m) => normalizeName(m.name) === normalizeName(top.name) && contentOf(m) === contentOf(top),
+  );
+  return same.reduce((a, b) => (homeFactionRank(b) > homeFactionRank(a) ? b : a), top);
 }

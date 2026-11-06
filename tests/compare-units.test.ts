@@ -115,4 +115,37 @@ describe("compare_units tool", () => {
     expect(text).toContain("Abaddon the Despoiler");
     expect(text).toContain("Haarken Worldclaimer");
   });
+
+  // Field test row L2: "Intercessors" resolved to Assault Intercessors via a substring match, twice.
+  it("matches Intercessors to the Intercessor Squad, not Assault Intercessors", async () => {
+    const result = await client.callTool({
+      name: "compare_units",
+      arguments: { units: ["Intercessors", "Assault Intercessors"], game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("## Intercessor Squad");
+    expect(text.match(/## Assault Intercessors with Jump Packs/g)).toHaveLength(1);
+    expect(text).toContain("Unit Comparison (2 units)");
+  });
+
+  it("resolves a faction-prefixed name like Ork Boyz", async () => {
+    const result = await client.callTool({
+      name: "compare_units",
+      arguments: { units: ["Intercessors", "Ork Boyz"], game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("## Boyz");
+    expect(text).toContain("**Faction:** Orks");
+    expect(text).not.toContain("not found");
+  });
+
+  it("never shows the same datasheet twice for different inputs", async () => {
+    const result = await client.callTool({
+      name: "compare_units",
+      arguments: { units: ["Intercessors", "Intercessor Squad"], game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text.match(/## Intercessor Squad/g)).toHaveLength(1);
+    expect(text).toContain("matched the same datasheet");
+  });
 });
