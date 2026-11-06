@@ -18,6 +18,7 @@ const EXPECTED_TOOLS = [
   "lookup_ploy",
   "determine_primary_mission",
   "lookup_crusade",
+  "lookup_weapon",
 ] as const;
 
 describe("server integration", () => {
@@ -35,9 +36,9 @@ describe("server integration", () => {
     expect(server).toBeDefined();
   });
 
-  it("registers exactly 14 tools", async () => {
+  it("registers exactly 15 tools", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
   });
 
   it("registers all expected tool names", async () => {
@@ -58,6 +59,15 @@ describe("server integration", () => {
       const result = await client.callTool({
         name: "lookup_unit",
         arguments: { unit_name: "Abaddon the Despoiler" },
+      });
+      expect(result.content).toBeDefined();
+      expect(result.isError).toBeFalsy();
+    });
+
+    it("lookup_weapon", async () => {
+      const result = await client.callTool({
+        name: "lookup_weapon",
+        arguments: { weapon_name: "Plasma gun" },
       });
       expect(result.content).toBeDefined();
       expect(result.isError).toBeFalsy();

@@ -72,6 +72,19 @@ When a name has different datasheets, the tool lists the matching factions. If a
 
 **Parameters:** `unit_name` (required), `faction` (optional), `datasheet_id` (optional, exact ID shown for same-faction variants), `game_mode` (optional: `40k`/`40k_11e` (default, 11th Edition), `40k_10e`, `combat_patrol`, `kill_team`)
 
+### `lookup_weapon`
+
+Look up a weapon's stats by weapon name, ranged or melee. Collects the weapon from every datasheet that carries it, groups identical profiles, and leads with the standard (most common) profile: range, attacks, strength, AP, damage, and keywords. Datasheet-specific variants follow, each with the stats that differ. BS/WS belongs to the bearer, so it's noted separately rather than treated as part of the profile.
+
+```
+"What are the stats of a plasma gun?"
+"What's the strength of a lascannon?"
+```
+
+Matching is on the weapon's own name, so "plasma gun" doesn't pull in "Twin plasma gun". If nothing matches exactly, the tool suggests close weapon names.
+
+**Parameters:** `weapon_name` (required), `faction` (optional, only that faction's datasheets), `game_mode` (optional: `40k`/`40k_11e` (default), `40k_10e`, `combat_patrol`, `kill_team`)
+
 ### `lookup_keyword`
 
 Look up a keyword or rule. Returns the official definition, a plain English explanation, examples, and which game modes it applies to.
