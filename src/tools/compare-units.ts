@@ -3,7 +3,7 @@ import { z } from "zod";
 import { UNITS } from "../data/units.js";
 import { UNITS_11E } from "../data/units-11e.js";
 import { KILL_TEAM_OPERATIVES } from "../data/kill-team-operatives.js";
-import { fuzzySearch } from "../lib/search.js";
+import { datasheetContentKey, pickUnitMatch, rankUnitMatchesWithFactionHint } from "../lib/unit-match.js";
 import { formatModeStamp, formatUnitSize } from "../lib/format.js";
 import type {
   Unit,
@@ -143,6 +143,40 @@ function formatKTOperative(op: KillTeamOperative): string {
   return sections.join("\n\n");
 }
 
+/**
+ * Resolve each requested name with the same ranked matching `lookup_unit`
+ * uses (plus a leading-faction-word hint), and never show one datasheet twice:
+ * a later name that lands on an already-shown datasheet is reported instead.
+ */
+function resolveNames<T extends { id: string; name: string; faction: string; keywords: string[] }>(
+  pool: T[],
+  names: string[],
+): { found: T[]; notFound: string[]; duplicates: string[] } {
+  const found: T[] = [];
+  const notFound: string[] = [];
+  const duplicates: string[] = [];
+  const shownBy = new Map<string, string>();
+  for (const name of names) {
+    const matches = rankUnitMatchesWithFactionHint(pool, name, datasheetContentKey);
+    // Judge ambiguity against the matched name: compare_units must pick one
+    // datasheet even when the request was a loose "Intercessors".
+    const pick = pickUnitMatch(matches, matches[0]?.name ?? name, datasheetContentKey);
+    if (!pick) {
+      notFound.push(name);
+      continue;
+    }
+    const key = JSON.stringify([pick.name, datasheetContentKey(pick)]);
+    const earlier = shownBy.get(key);
+    if (earlier !== undefined) {
+      duplicates.push(`"${name}" matched the same datasheet as "${earlier}" (${pick.name}), so it is shown once.`);
+      continue;
+    }
+    shownBy.set(key, name);
+    found.push(pick);
+  }
+  return { found, notFound, duplicates };
+}
+
 // === Tool Registration ===
 
 export function registerCompareUnits(server: McpServer): void {
@@ -165,17 +199,7 @@ export function registerCompareUnits(server: McpServer): void {
     },
     async ({ units, game_mode }) => {
       if (game_mode === "kill_team") {
-        const found: KillTeamOperative[] = [];
-        const notFound: string[] = [];
-
-        for (const name of units) {
-          const matches = fuzzySearch(KILL_TEAM_OPERATIVES, name, ["name"]);
-          if (matches.length > 0) {
-            found.push(matches[0]);
-          } else {
-            notFound.push(name);
-          }
-        }
+        const { found, notFound, duplicates } = resolveNames<KillTeamOperative>(KILL_TEAM_OPERATIVES, units);
 
         if (found.length === 0) {
           return {
@@ -199,6 +223,10 @@ export function registerCompareUnits(server: McpServer): void {
           );
         }
 
+        if (duplicates.length > 0) {
+          sections.push(`> ${duplicates.join(" ")}`);
+        }
+
         const opSections = found.map((op) => formatKTOperative(op));
         sections.push(opSections.join("\n\n---\n\n"));
 
@@ -215,17 +243,7 @@ export function registerCompareUnits(server: McpServer): void {
       // Default: 40K units (11th Edition unless 10th Edition is explicitly requested)
       const gameSystem = game_mode === "40k_10e" ? "wh40k-10e" : "wh40k-11e";
       const pool = gameSystem === "wh40k-10e" ? UNITS : UNITS_11E;
-      const found: Unit[] = [];
-      const notFound: string[] = [];
-
-      for (const name of units) {
-        const matches = fuzzySearch(pool, name, ["name"]);
-        if (matches.length > 0) {
-          found.push(matches[0]);
-        } else {
-          notFound.push(name);
-        }
-      }
+      const { found, notFound, duplicates } = resolveNames<Unit>(pool, units);
 
       if (found.length === 0) {
         return {
@@ -248,6 +266,10 @@ export function registerCompareUnits(server: McpServer): void {
         sections.push(
           `> **Units not found:** ${notFound.map((n) => `"${n}"`).join(", ")}. These could not be matched to any known unit.`,
         );
+      }
+
+      if (duplicates.length > 0) {
+        sections.push(`> ${duplicates.join(" ")}`);
       }
 
       const unitSections = found.map((unit) => formatUnit(unit));

@@ -273,4 +273,85 @@ describe("lookup_unit tool", () => {
     expect(text).toContain("Astra Militarum");
     expect(text).not.toContain("different stats");
   });
+
+  // Field test rows A1/E2: a bare name shared by many armies answered "which army?".
+  it("answers Bloodletters directly from Chaos Daemons and notes the World Eaters version", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Bloodletters", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("### Unit Profiles");
+    expect(text).toContain("**Faction:** Chaos Daemons");
+    expect(text).toContain("**Note:** Home: Chaos Daemons. Also fielded by 7 other armies. Variant: World Eaters (90 pts, OC 1).");
+    expect(text).not.toContain("more than one datasheet");
+  });
+
+  it("answers Land Raider directly from Space Marines and notes the Grey Knights version", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Land Raider", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("### Unit Profiles");
+    expect(text).toContain("**Faction:** Adeptus Astartes - Space Marines");
+    expect(text).toMatch(/Home: Space Marines\..*Variants?:.*Grey Knights \(220 pts/);
+    expect(text).not.toContain("more than one datasheet");
+  });
+
+  it("still disambiguates units whose legion versions genuinely differ (Helbrute)", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Helbrute", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("more than one datasheet");
+    expect(text).toContain("**Helbrute** (World Eaters)");
+    expect(text).not.toContain("### Unit Profiles");
+  });
+
+  it("still offers both World Eaters Bloodletters when the faction is given", async () => {
+    const result = await client.callTool({
+      name: "lookup_unit",
+      arguments: { unit_name: "Bloodletters", faction: "World Eaters", game_mode: "40k_11e" },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("datasheet_id");
+    expect(text).not.toContain("### Unit Profiles");
+  });
+
+  describe("an army name before the unit name", () => {
+    const lookup = async (args: Record<string, string>) => {
+      const result = await client.callTool({ name: "lookup_unit", arguments: { game_mode: "40k_11e", ...args } });
+      return (result.content as Array<{ type: string; text: string }>)[0].text;
+    };
+
+    // Voice test 2026-11-01: "Grey Knight Paladins" answered with the allied Imperial Knight.
+    it.each([
+      [{ unit_name: "Grey Knight Paladins", faction: "Grey Knights" }],
+      [{ unit_name: "Grey Knight Paladins" }],
+      [{ unit_name: "Grey Knight Paladin" }],
+    ])("reads %o as the Paladin Squad, not Knight Paladin", async (args) => {
+      const text = await lookup(args);
+      expect(text).toContain("# Paladin Squad");
+      expect(text).not.toContain("# Knight Paladin");
+    });
+
+    it("still finds Knight Paladin by its own name in a Grey Knights army", async () => {
+      expect(await lookup({ unit_name: "Knight Paladin", faction: "Grey Knights" })).toContain("# Knight Paladin");
+    });
+
+    it.each([
+      ["Space Marine Intercessors", "# Intercessor Squad"],
+      ["Ork Boyz", "# Boyz"],
+      ["Necron Warriors", "# Necron Warriors"],
+      ["Tyranid Warriors", "# Tyranid Warriors"],
+      ["Chaos Space Marine Legionaries", "# Legionaries"],
+      ["Death Guard Plague Marines", "# Plague Marines"],
+      ["Imperial Knight Paladin", "# Knight Paladin"],
+      ["Grey Knight Strike Squad", "# Strike Squad"],
+    ])("reads %s as %s", async (unit_name, heading) => {
+      expect(await lookup({ unit_name })).toContain(heading);
+    });
+  });
 });
